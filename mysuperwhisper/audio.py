@@ -235,8 +235,6 @@ def _audio_callback(indata, frames, time_info, status):
 
     Note: This is time-critical code. No slow or blocking calls.
     """
-    global audio_buffer
-
     if is_recording:
         audio_buffer.append(indata.copy())
 

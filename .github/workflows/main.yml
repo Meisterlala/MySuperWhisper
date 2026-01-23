@@ -39,7 +39,8 @@ jobs:
 
     - name: Lint with flake8
       run: |
-        ./venv/bin/flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exclude venv directory to avoid checking installed dependencies
+        ./venv/bin/flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv
 
     - name: Test Imports and Help Command (Headless)
       # Run using the venv python and xvfb for display simulation

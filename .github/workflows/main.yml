@@ -1,0 +1,47 @@
+name: "CI - Build & Smoke Test"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+        cache: 'pip'
+
+    - name: Install CI-specific tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb
+
+    - name: Run Installer Script
+      env:
+        # Force X11 session type so the script installs xdotool instead of wtype
+        XDG_SESSION_TYPE: x11
+      run: |
+        chmod +x install.sh
+        ./install.sh
+
+    - name: Install Test Dependencies
+      run: |
+        # Use the venv created by the installer
+        ./venv/bin/pip install flake8 pytest
+
+    - name: Lint with flake8
+      run: |
+        ./venv/bin/flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+    - name: Test Imports and Help Command (Headless)
+      # Run using the venv python and xvfb for display simulation
+      run: |
+        xvfb-run ./venv/bin/python -m mysuperwhisper --help

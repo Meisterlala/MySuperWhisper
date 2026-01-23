@@ -182,7 +182,6 @@ MySuperWhisper/
 │   ├── keyboard.py          # Hotkey handling
 │   ├── history.py           # History management
 │   └── tray.py              # System tray
-├── mysuperwhisper.py        # Legacy single-file version
 ├── install.sh               # Installation script
 ├── requirements.txt         # Python dependencies
 ├── LICENSE                  # MIT License

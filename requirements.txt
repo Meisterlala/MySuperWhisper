@@ -5,5 +5,3 @@ pynput
 pystray
 Pillow>=10.3.0,<11.0
 pyperclip
-# PyGObject est fourni par le paquet système python3-gi
-# Le venv est créé avec --system-site-packages pour y accéder

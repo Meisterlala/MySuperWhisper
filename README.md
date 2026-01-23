@@ -201,6 +201,10 @@ MySuperWhisper/
 - Try a smaller model (tiny, base, small)
 - Check if running in CPU mode (indicated in tray tooltip with [CPU])
 
+### GPU issues after driver update
+- If you recently updated your NVIDIA drivers, the app might fallback to CPU mode or fail to load the model.
+- **Solution:** Restart your computer to ensure the new drivers are correctly loaded.
+
 ### Text not typed in some applications
 - Some applications may not accept simulated keyboard input
 - **Workaround:** The transcribed text is **always copied to your clipboard**. If automated typing fails, you can simply paste it manually (Ctrl+V).

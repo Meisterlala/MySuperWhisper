@@ -223,9 +223,41 @@ def on_quit():
     os._exit(0)
 
 
+def check_single_instance():
+    """
+    Ensure only one instance is running using lock file.
+    Returns True if this is the only instance, False otherwise.
+    """
+    import fcntl
+    lock_file = "/tmp/mysuperwhisper.lock"
+    
+    try:
+        # Open the lock file (create if runs first)
+        f = open(lock_file, 'w')
+        # Try to acquire an exclusive lock
+        # LOCK_EX: Exclusive lock
+        # LOCK_NB: Non-blocking (fail if already locked)
+        fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        
+        # Keep file open to hold lock
+        # We attach it to the module or global scope to prevent GC
+        global _instance_lock_file
+        _instance_lock_file = f
+        return True
+    except IOError:
+        # Someone else has the lock
+        return False
+
+
 def main():
     """Main entry point."""
     global args
+
+    # Check for existing instance
+    if not check_single_instance():
+        print("MySuperWhisper is already running!")
+        send_notification("MySuperWhisper", "Application is already running.", "dialog-information")
+        sys.exit(0)
 
     # Parse arguments
     args = parse_args()

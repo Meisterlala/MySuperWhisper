@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=MySuperWhisper
+Comment=Transcription vocale locale avec Whisper
+# CE FICHIER EST UN TEMPLATE UTILISÉ PAR install.sh
+Exec=__PYTHON_EXEC__ __SCRIPT_PATH__
+Path=__WORK_DIR__
+Icon=__ICON_PATH__
+Terminal=false
+Categories=Utility;Audio;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

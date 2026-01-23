@@ -129,9 +129,9 @@ MySuperWhisper recognizes voice commands in multiple languages:
 
 Say: *"Hello new line How are you enter"*
 
-Result: Types "Hello", presses Shift+Enter for new line, types "How are you", then presses Enter.
+Result: Types "Hello", creates a new line, types "How are you", then presses Enter.
 
-> **Note**: New line commands use Shift+Enter, which creates a soft line break. This works in most applications but may not work in terminal emulators.
+> **Note**: In standard applications, "new line" uses `Shift+Enter` (soft line break). In **terminal emulators**, it intelligently switches to `Ctrl+Shift+V` to paste the text with actual newlines, ensuring correct behavior.
 
 ## Configuration
 
@@ -203,11 +203,11 @@ MySuperWhisper/
 
 ### Text not typed in some applications
 - Some applications may not accept simulated keyboard input
-- Try using Ctrl+V to paste from clipboard (text is always copied there)
+- **Workaround:** The transcribed text is **always copied to your clipboard**. If automated typing fails, you can simply paste it manually (Ctrl+V).
 
 ### New line doesn't work in terminal
-- This is a known limitation of terminal emulators
-- Shift+Return is used for new lines, which terminals interpret differently
+- This should be handled automatically now (auto-switch to Ctrl+Shift+V)
+- If not, try pasting manually using Ctrl+Shift+V
 
 ## Dependencies
 

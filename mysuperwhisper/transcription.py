@@ -135,6 +135,18 @@ def reload_model(new_model_size):
         return False
 
 
+def unload_model():
+    """Unload the Whisper model to free memory/VRAM."""
+    global _model
+    if _model:
+        log("Unloading model to free resources...")
+        del _model
+        _model = None
+        gc.collect()
+        return True
+    return False
+
+
 def transcribe(audio_data, language=None, fast=False):
     """
     Transcribe audio to text.

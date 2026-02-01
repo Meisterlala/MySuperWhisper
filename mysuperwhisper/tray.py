@@ -183,6 +183,16 @@ def _on_toggle_voice_commands(icon, item):
     log(f"Voice commands: {'enabled' if config.voice_commands_enabled else 'disabled'}")
 
 
+def _on_toggle_unload_model(icon, item):
+    """Toggle model unloading on inactivity."""
+    config.unload_model_after_inactivity = not config.unload_model_after_inactivity
+    if _save_config_callback:
+        _save_config_callback()
+    log(
+        f"Unload model after inactivity: {'enabled' if config.unload_model_after_inactivity else 'disabled'}"
+    )
+
+
 def _on_toggle_test(icon, item):
     """Toggle microphone test mode."""
     if audio.is_testing_mic():
@@ -443,6 +453,11 @@ def _create_menu():
             "Voice commands",
             _on_toggle_voice_commands,
             checked=lambda item: config.voice_commands_enabled
+        ),
+        pystray.MenuItem(
+            "Unload model on inactivity",
+            _on_toggle_unload_model,
+            checked=lambda item: config.unload_model_after_inactivity
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("History (Triple Ctrl)", _on_show_history),

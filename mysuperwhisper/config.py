@@ -69,6 +69,7 @@ class Config:
         self.sound_notifications_enabled = True
         self.live_preview_enabled = True
         self.voice_commands_enabled = True
+        self.unload_model_after_inactivity = True
         self.input_device = None
         self.output_device = None
 
@@ -85,6 +86,7 @@ class Config:
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.live_preview_enabled = data.get("live_preview_enabled", True)
                 self.voice_commands_enabled = data.get("voice_commands_enabled", True)
+                self.unload_model_after_inactivity = data.get("unload_model_after_inactivity", True)
                 self.input_device = data.get("input_device")
                 self.output_device = data.get("output_device")
 
@@ -102,6 +104,7 @@ class Config:
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "live_preview_enabled": self.live_preview_enabled,
                 "voice_commands_enabled": self.voice_commands_enabled,
+                "unload_model_after_inactivity": self.unload_model_after_inactivity,
                 "input_device": self.input_device,
                 "output_device": self.output_device
             }

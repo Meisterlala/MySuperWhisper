@@ -78,17 +78,29 @@ def parse_args():
 # Global state for sleep mode
 _last_activity_time = time.time()
 _is_sleeping = False
-AUTO_SLEEP_TIMEOUT = 300  # 5 minutes
+_is_model_loaded = True
+
+# Inactivity timeouts (seconds)
+AUTO_SLEEP_TIMEOUT = 15
+MODEL_UNLOAD_TIMEOUT = 60 * 15
 
 
 def update_activity():
     """Update last activity timestamp and wake up if sleeping."""
-    global _last_activity_time, _is_sleeping
+    global _last_activity_time, _is_sleeping, _is_model_loaded
     _last_activity_time = time.time()
+
     if _is_sleeping:
         log("Waking up from sleep mode...")
         _is_sleeping = False
         audio.start_stream()
+        tray.update_tray("idle")
+
+    if not _is_model_loaded:
+        log("Waking up: Reloading model...")
+        tray.update_tray("loading")
+        transcription.load_model()
+        _is_model_loaded = True
         tray.update_tray("idle")
 
 
@@ -267,14 +279,30 @@ def save_config():
 
 def sleep_monitor_worker():
     """Monitor for inactivity and put app to sleep."""
-    global _is_sleeping
+    global _is_sleeping, _is_model_loaded
     while True:
         time.sleep(10)
+        now = time.time()
+        inactive_duration = now - _last_activity_time
+
         if not _is_sleeping and not audio.is_currently_recording():
-            if time.time() - _last_activity_time > AUTO_SLEEP_TIMEOUT:
-                log("Entering sleep mode due to inactivity (5m)...")
+            if inactive_duration > AUTO_SLEEP_TIMEOUT:
+                mins = int(AUTO_SLEEP_TIMEOUT / 60)
+                log(f"Entering sleep mode due to inactivity ({mins}m)...")
                 _is_sleeping = True
+                # Deactivate mic after inactivity
                 audio.stop_stream()
+
+        if (
+            config.unload_model_after_inactivity
+            and _is_model_loaded
+            and not audio.is_currently_recording()
+        ):
+            if inactive_duration > MODEL_UNLOAD_TIMEOUT:
+                mins = int(MODEL_UNLOAD_TIMEOUT / 60)
+                log(f"Unloading model due to inactivity ({mins}m)...")
+                transcription.unload_model()
+                _is_model_loaded = False
                 tray.update_tray("sleeping")
 
 

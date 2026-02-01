@@ -12,42 +12,46 @@ from .config import log
 
 def detect_session_type():
     """Detect if running on Wayland or X11."""
+    # Check for WAYLAND_DISPLAY first as XDG_SESSION_TYPE can be unreliable
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "wayland"
     return os.environ.get("XDG_SESSION_TYPE", "").lower()
 
 
 def _is_terminal(session_type):
     """
     Check if the active window is a terminal emulator.
-    Uses xdotool/xprop on X11 and compatible Wayland environments.
     """
     try:
-        # 1. Get Active Window ID
-        # Note: xdotool might not work on native Wayland windows, 
-        # but often works for XWayland or if disabled security.
-        cmd_id = ["xdotool", "getactivewindow"]
-        result_id = subprocess.run(cmd_id, capture_output=True, text=True, timeout=0.5)
+        window_class = ""
         
-        if result_id.returncode != 0:
-            return False
-            
-        window_id = result_id.stdout.strip()
-        if not window_id:
-            return False
+        # Try Hyprland-specific detection
+        if session_type == "wayland":
+            try:
+                res = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=0.2)
+                if res.returncode == 0:
+                    import json
+                    data = json.loads(res.stdout)
+                    window_class = data.get("class", "").lower()
+            except:
+                pass
 
-        # 2. Get Window Class
-        cmd_prop = ["xprop", "-id", window_id, "WM_CLASS"]
-        result_prop = subprocess.run(cmd_prop, capture_output=True, text=True, timeout=0.5)
-        
-        if result_prop.returncode != 0:
-            return False
+        # Fallback to xdotool for X11/XWayland
+        if not window_class:
+            cmd_id = ["xdotool", "getactivewindow"]
+            result_id = subprocess.run(cmd_id, capture_output=True, text=True, timeout=0.5)
+            if result_id.returncode == 0:
+                window_id = result_id.stdout.strip()
+                cmd_prop = ["xprop", "-id", window_id, "WM_CLASS"]
+                result_prop = subprocess.run(cmd_prop, capture_output=True, text=True, timeout=0.5)
+                if result_prop.returncode == 0:
+                    window_class = result_prop.stdout.lower()
 
         # Check for terminal keywords
-        # Common classes: gnome-terminal, xterm, kitty, alacritty, konsole...
-        class_info = result_prop.stdout.lower()
-        return "term" in class_info or "console" in class_info or "kitty" in class_info
+        # Common classes: ghostty, gnome-terminal, xterm, kitty, alacritty, konsole...
+        return any(term in window_class for term in ["term", "console", "kitty", "ghostty", "alacritty", "st-256color"])
 
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        # Tools not installed or other error -> assume not terminal
         return False
 
 

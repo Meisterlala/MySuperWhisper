@@ -95,15 +95,18 @@ def on_triple_ctrl():
 def start_recording():
     """Start voice recording."""
     audio.start_recording()
-    tray.update_tray("recording")
-
-    # Notifications
-    play_sound("start")
-    send_notification(
-        "MySuperWhisper",
-        "Recording...",
-        "audio-input-microphone"
-    )
+    
+    # Do notifications in background to avoid any latency on the start
+    def _notify():
+        play_sound("start")
+        tray.update_tray("recording")
+        send_notification(
+            "MySuperWhisper",
+            "Recording...",
+            "audio-input-microphone"
+        )
+    
+    threading.Thread(target=_notify, daemon=True).start()
 
 
 def stop_and_process():

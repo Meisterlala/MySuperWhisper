@@ -100,6 +100,15 @@ def update_tray(status, level=0.0):
     if _tray_icon is None:
         return
 
+    # Check if we actually need to change anything to avoid redundant redraws
+    # which can be slow on some environments (Wayland/XWayland)
+    current_status = getattr(_tray_icon, "_last_status", None)
+    current_level = getattr(_tray_icon, "_last_level", -1.0)
+    if status == current_status and abs(level - current_level) < 0.05:
+        return
+    _tray_icon._last_status = status
+    _tray_icon._last_level = level
+
     # Constant prefix to prevent icon reordering
     prefix = "MySuperWhisper: "
     color = "green"

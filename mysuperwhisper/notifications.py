@@ -25,7 +25,7 @@ def send_live_notification(text):
             "-a", "MySuperWhisper",
             "-h", "string:x-canonical-private-synchronous:mysuperwhisper-live",
             "-h", "int:transient:1",
-            "-t", "2000",
+            "-t", "8000",
             "MySuperWhisper (Live)", text
         ]
         subprocess.Popen(cmd)

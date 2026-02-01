@@ -90,45 +90,44 @@ def play_sound(sound_type):
     if not config.sound_notifications_enabled:
         return
 
-    def _play():
+    # Pre-generate WAV data outside the thread if it's the 'start' sound
+    # to minimize latency.
+    wav_data = None
+    if sound_type == "start":
+        wav_data = _generate_beep_wav(600, 150)
+
+    def _play(preloaded_wav=None):
         try:
-            # Generate appropriate sound
-            if sound_type == "start":
-                # Simple beep 600Hz 150ms
-                wav_data = _generate_beep_wav(600, 150)
+            # Generate appropriate sound if not preloaded
+            if preloaded_wav:
+                wav_data_to_play = preloaded_wav
             elif sound_type == "success":
                 # Higher pitched beep 880Hz 200ms
-                wav_data = _generate_beep_wav(880, 200)
+                wav_data_to_play = _generate_beep_wav(880, 200)
             elif sound_type == "error":
                 # Low tone 300Hz 250ms
-                wav_data = _generate_beep_wav(300, 250)
+                wav_data_to_play = _generate_beep_wav(300, 250)
             else:
                 return
 
             # Write to temporary file
             with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
                 temp_path = f.name
-                f.write(wav_data)
-
-            log(f"Playing sound '{sound_type}'", "debug")
+                f.write(wav_data_to_play)
 
             # Play with paplay (PulseAudio) - most reliable
             try:
-                result = subprocess.run(
-                    ["paplay", temp_path],
+                subprocess.run(
+                    ["paplay", "--latency-msec=10", temp_path],
                     capture_output=True,
-                    timeout=5
+                    timeout=2
                 )
-                if result.returncode != 0:
-                    log(f"paplay error: {result.stderr.decode()}", "debug")
             except FileNotFoundError:
                 # Fallback to aplay (ALSA)
                 try:
-                    subprocess.run(["aplay", "-q", temp_path], timeout=5)
+                    subprocess.run(["aplay", "-q", temp_path], timeout=2)
                 except FileNotFoundError:
-                    log("Neither paplay nor aplay found for playing sounds", "warning")
-            except subprocess.TimeoutExpired:
-                log("Sound playback timeout", "warning")
+                    pass
             finally:
                 # Clean up temporary file
                 try:
@@ -140,4 +139,4 @@ def play_sound(sound_type):
             log(f"Sound playback error: {e}", "error")
 
     # Play in separate thread to avoid blocking
-    threading.Thread(target=_play, daemon=True).start()
+    threading.Thread(target=_play, args=(wav_data,), daemon=True).start()

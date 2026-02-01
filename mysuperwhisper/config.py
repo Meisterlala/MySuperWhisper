@@ -67,6 +67,7 @@ class Config:
         self.language = "en"  # Default to English
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
+        self.live_preview_enabled = True
         self.input_device = None
         self.output_device = None
 
@@ -81,6 +82,7 @@ class Config:
                 self.language = data.get("language", "en")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
+                self.live_preview_enabled = data.get("live_preview_enabled", True)
                 self.input_device = data.get("input_device")
                 self.output_device = data.get("output_device")
 
@@ -96,6 +98,7 @@ class Config:
                 "language": self.language,
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
+                "live_preview_enabled": self.live_preview_enabled,
                 "input_device": self.input_device,
                 "output_device": self.output_device
             }

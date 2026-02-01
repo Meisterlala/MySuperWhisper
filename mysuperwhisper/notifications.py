@@ -13,25 +13,43 @@ import numpy as np
 from .config import log, config
 
 
+def send_live_notification(text):
+    """
+    Send or update a persistent live transcription notification.
+    Bypasses the global system_notifications_enabled setting.
+    """
+    try:
+        cmd = [
+            "notify-send",
+            "-i", "audio-input-microphone",
+            "-a", "MySuperWhisper",
+            "-h", "string:x-canonical-private-synchronous:mysuperwhisper-live",
+            "-h", "int:transient:1",
+            "-t", "2000",
+            "MySuperWhisper (Live)", text
+        ]
+        subprocess.Popen(cmd)
+    except Exception as e:
+        log(f"Live notification error: {e}", "error")
+
+
 def send_notification(title, message, icon="dialog-information"):
     """
-    Send a system notification via notify-send.
-
-    Args:
-        title: Notification title
-        message: Notification message
-        icon: Icon name (from system theme)
+    Send a standard system notification via notify-send.
+    Respects the global system_notifications_enabled setting.
     """
     if not config.system_notifications_enabled:
         return
 
     try:
-        subprocess.Popen([
+        cmd = [
             "notify-send",
             "-i", icon,
             "-a", "MySuperWhisper",
+            "-t", "3000",
             title, message
-        ])
+        ]
+        subprocess.Popen(cmd)
     except FileNotFoundError:
         log("notify-send not found. Install libnotify-bin.", "warning")
     except Exception as e:

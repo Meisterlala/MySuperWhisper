@@ -24,26 +24,23 @@ License: MIT
 """
 
 import sys
+
 # Hack to access system PyGObject (gi) from venv for AppIndicator support
-sys.path.append('/usr/lib/python3/dist-packages')
+sys.path.append("/usr/lib/python3/dist-packages")
 
 import argparse
 import os
 import queue
-import threading
 import signal
 import sys
+import threading
+import time
 
-from .config import log, config, LOG_FILE, CONFIG_DIR
-from . import audio
-from . import transcription
-from . import tray
-from . import keyboard
-from . import history
-from .voice_commands import process_voice_commands
+from . import audio, history, keyboard, transcription, tray
+from .config import CONFIG_DIR, LOG_FILE, config, log
+from .notifications import play_sound, send_live_notification, send_notification
 from .paste import paste_text, press_enter_key
-from .notifications import send_notification, play_sound
-
+from .voice_commands import process_voice_commands
 
 # Processing queue
 processing_queue = queue.Queue()
@@ -58,22 +55,22 @@ def parse_args():
     parser.add_argument(
         "--playback",
         action="store_true",
-        help="Enable audio playback after recording (debug)"
+        help="Enable audio playback after recording (debug)",
     )
     parser.add_argument(
         "--toggle",
         action="store_true",
-        help="Toggle recording on a running instance and exit"
+        help="Toggle recording on a running instance and exit",
     )
     parser.add_argument(
         "--start",
         action="store_true",
-        help="Start recording on a running instance (no-op if already recording)"
+        help="Start recording on a running instance (no-op if already recording)",
     )
     parser.add_argument(
         "--stop",
         action="store_true",
-        help="Stop recording on a running instance (no-op if not recording)"
+        help="Stop recording on a running instance (no-op if not recording)",
     )
     return parser.parse_args()
 
@@ -92,25 +89,36 @@ def on_triple_ctrl():
         history.open_history_popup_async()
 
 
+# Global state for live preview
+_is_recording = False
+_live_preview_thread = None
+
+
 def start_recording():
     """Start voice recording."""
+    global _is_recording, _live_preview_thread
+    _is_recording = True
+
     audio.start_recording()
-    
-    # Do notifications in background to avoid any latency on the start
+
+    # Do notifications in background
     def _notify():
         play_sound("start")
         tray.update_tray("recording")
-        send_notification(
-            "MySuperWhisper",
-            "Recording...",
-            "audio-input-microphone"
-        )
-    
+        send_notification("MySuperWhisper", "Listening...", "audio-input-microphone")
+
     threading.Thread(target=_notify, daemon=True).start()
+
+    # Start live preview loop
+    _live_preview_thread = threading.Thread(target=live_preview_worker, daemon=True)
+    _live_preview_thread.start()
 
 
 def stop_and_process():
     """Stop recording and queue audio for processing."""
+    global _is_recording
+    _is_recording = False
+
     audio_data = audio.stop_recording()
 
     if audio_data is None:
@@ -132,6 +140,37 @@ def stop_and_process():
     processing_queue.put(audio_data)
 
 
+def live_preview_worker():
+    """Worker thread for live transcription preview."""
+    log("Live preview worker started", "debug")
+    last_preview_time = time.time()
+
+    while _is_recording:
+        time.sleep(0.01)
+        if not config.live_preview_enabled:
+            break
+
+        now = time.time()
+
+        # Update preview every 0.6 seconds if we have audio
+        if now - last_preview_time >= 0.6:
+            audio_data = audio.get_current_buffer()
+            if audio_data is not None:
+                audio_len = len(audio_data)
+                if audio_len > 32000:  # Min ~0.7s of audio
+                    try:
+                        audio_16k = audio.prepare_for_whisper(audio_data)
+                        # Use fast mode (beam_size=1) for live preview
+                        text = transcription.transcribe(audio_16k, fast=True)
+                        # log(f"Live preview text: '{text}'", "debug")
+                        if text:
+                            send_live_notification(text)
+                    except Exception as e:
+                        log(f"Live preview error: {e}", "debug")
+            last_preview_time = now
+    log("Live preview worker stopped", "debug")
+
+
 def audio_processing_loop():
     """
     Main processing loop running in a separate thread.
@@ -146,6 +185,7 @@ def audio_processing_loop():
             log("Debug playback...", "debug")
             try:
                 import sounddevice as sd
+
                 sd.play(audio_data, audio.SAMPLE_RATE)  # Uses PulseAudio default
                 sd.wait()
             except Exception as e:
@@ -165,7 +205,9 @@ def audio_processing_loop():
 
                 # Process voice commands
                 processed_text, should_validate = process_voice_commands(text)
-                log(f"After command processing: '{processed_text}' (validate={should_validate})")
+                log(
+                    f"After command processing: '{processed_text}' (validate={should_validate})"
+                )
 
                 if processed_text:
                     # Paste the text
@@ -178,33 +220,23 @@ def audio_processing_loop():
                     send_notification(
                         "MySuperWhisper",
                         f"Text pasted ({len(processed_text)} chars)",
-                        "dialog-ok"
+                        "dialog-ok",
                     )
                 elif should_validate:
                     # Just validation keyword without text -> press Enter
                     press_enter_key()
-                    send_notification(
-                        "MySuperWhisper",
-                        "Enter key sent",
-                        "dialog-ok"
-                    )
+                    send_notification("MySuperWhisper", "Enter key sent", "dialog-ok")
             else:
                 log("Nothing detected.", "warning")
                 play_sound("error")
                 send_notification(
-                    "MySuperWhisper",
-                    "No text detected",
-                    "dialog-warning"
+                    "MySuperWhisper", "No text detected", "dialog-warning"
                 )
 
         except Exception as e:
             log(f"Transcription error: {e}", "error")
             play_sound("error")
-            send_notification(
-                "MySuperWhisper",
-                f"Error: {e}",
-                "dialog-error"
-            )
+            send_notification("MySuperWhisper", f"Error: {e}", "dialog-error")
 
         # Return to idle state
         tray.update_tray("idle")
@@ -234,7 +266,7 @@ def startup_worker():
     keyboard.set_callbacks(
         on_double_ctrl=on_double_ctrl,
         on_triple_ctrl=on_triple_ctrl,
-        is_recording=audio.is_currently_recording
+        is_recording=audio.is_currently_recording,
     )
     keyboard.start_listener()
 
@@ -271,18 +303,19 @@ def check_single_instance():
     Returns True if this is the only instance, False otherwise.
     """
     import fcntl
+
     lock_file = "/tmp/mysuperwhisper.lock"
-    
+
     try:
         # Open the lock file (create if runs first)
-        f = open(lock_file, 'w')
+        f = open(lock_file, "w")
         # Try to acquire an exclusive lock
         fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        
+
         # Write PID to lock file
         f.write(str(os.getpid()))
         f.flush()
-        
+
         # Keep file open to hold lock
         global _instance_lock_file
         _instance_lock_file = f
@@ -296,7 +329,7 @@ def get_running_pid():
     lock_file = "/tmp/mysuperwhisper.lock"
     if os.path.exists(lock_file):
         try:
-            with open(lock_file, 'r') as f:
+            with open(lock_file, "r") as f:
                 content = f.read().strip()
                 if content:
                     return int(content)
@@ -325,7 +358,7 @@ def main():
                 elif args.stop:
                     sig = signal.SIGRTMIN
                     action = "stop"
-                
+
                 os.kill(pid, sig)
                 print(f"Sent {action} signal to instance with PID {pid}")
                 sys.exit(0)
@@ -341,7 +374,9 @@ def main():
     # Check for existing instance
     if not check_single_instance():
         print("MySuperWhisper is already running!")
-        send_notification("MySuperWhisper", "Application is already running.", "dialog-information")
+        send_notification(
+            "MySuperWhisper", "Application is already running.", "dialog-information"
+        )
         sys.exit(0)
 
     log("Starting MySuperWhisper")

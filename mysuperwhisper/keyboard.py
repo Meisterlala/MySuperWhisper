@@ -5,7 +5,9 @@ Manages Double Ctrl (record) and Triple Ctrl (history) detection.
 
 import threading
 import time
+
 from pynput import keyboard
+
 from .config import log
 
 # Callback functions (set by main module)
@@ -49,6 +51,13 @@ def _execute_double_ctrl_action():
 def _on_key_release(key):
     """Handle key release events."""
     global _last_ctrl_time, _ctrl_press_count, _ctrl_action_timer
+
+    # Detect F18 key
+    if key == keyboard.Key.f18 or (hasattr(key, "vk") and key.vk == 133):
+        log("F18 detected!", "info")
+        if _on_double_ctrl:
+            _on_double_ctrl()
+        return
 
     # Detect Ctrl key (Left or Right)
     if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:

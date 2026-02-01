@@ -6,8 +6,10 @@ Supports key combinations (e.g., Ctrl+A), solo keys, and multi-tap detection.
 
 import threading
 import time
+
 from pynput import keyboard
-from .config import log, config
+
+from .config import config, log
 
 # Callback functions (set by main module)
 _on_record_hotkey = None
@@ -317,7 +319,6 @@ def _on_key_release(key):
     except Exception as e:
         log(f"Error in key release handler: {e}", "error")
 
-
 def _on_key_release_inner(key):
     """Inner key release handler (wrapped by _on_key_release for safety)."""
     key_name = _get_key_name(key)
@@ -338,7 +339,6 @@ def _on_key_release_inner(key):
             _held_keys.discard(key_name)
             _held_keys_time.pop(key_name, None)
             return
-
         combo = _build_combo_string(held_mods, key_name)
         current_time = time.time()
 

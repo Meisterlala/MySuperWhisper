@@ -78,11 +78,11 @@ def parse_args():
 # Global state for sleep mode
 _last_activity_time = time.time()
 _is_sleeping = False
-_is_model_loaded = True
+_is_model_loaded = False
 
 # Inactivity timeouts (seconds)
 AUTO_SLEEP_TIMEOUT = 15
-MODEL_UNLOAD_TIMEOUT = 60 * 15
+MODEL_UNLOAD_TIMEOUT = 60 * 5
 
 
 def update_activity():
@@ -304,7 +304,7 @@ def sleep_monitor_worker():
 
         if not _is_sleeping and not audio.is_currently_recording():
             if inactive_duration > AUTO_SLEEP_TIMEOUT:
-                mins = int(AUTO_SLEEP_TIMEOUT / 60)
+                mins = AUTO_SLEEP_TIMEOUT / 60.0
                 log(f"Entering sleep mode due to inactivity ({mins}m)...")
                 _is_sleeping = True
                 # Deactivate mic after inactivity
@@ -316,7 +316,7 @@ def sleep_monitor_worker():
             and not audio.is_currently_recording()
         ):
             if inactive_duration > MODEL_UNLOAD_TIMEOUT:
-                mins = int(MODEL_UNLOAD_TIMEOUT / 60)
+                mins = MODEL_UNLOAD_TIMEOUT / 60.0
                 log(f"Unloading model due to inactivity ({mins}m)...")
                 transcription.unload_model()
                 _is_model_loaded = False
@@ -326,11 +326,9 @@ def sleep_monitor_worker():
 def startup_worker():
     """
     Startup initialization running in background.
-    Loads model and starts audio stream.
+    Prepares system and starts audio stream.
+    Model is NOT loaded on startup to save resources.
     """
-    # Load Whisper model
-    transcription.load_model()
-
     # Start audio processing thread
     processing_thread = threading.Thread(target=audio_processing_loop, daemon=True)
     processing_thread.start()
@@ -350,7 +348,8 @@ def startup_worker():
     log("The icon has been added to the notification area (system tray).")
     log("Right-click the icon to change microphone or test audio level.")
 
-    tray.update_tray("idle")
+    # Status is sleeping since model is not loaded
+    tray.update_tray("sleeping")
 
 
 def on_quit():

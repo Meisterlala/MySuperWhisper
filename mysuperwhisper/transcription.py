@@ -52,7 +52,7 @@ def load_model(model_size=None):
     Load the Whisper model.
 
     Attempts to use GPU (CUDA) first, falls back to CPU if unavailable.
-    Uses INT8 quantization for lower memory usage.
+    Uses float16 on GPU and float32 on CPU for better quality.
 
     Args:
         model_size: Model size ('tiny', 'base', 'small', 'medium', 'large-v3')
@@ -67,16 +67,18 @@ def load_model(model_size=None):
     log(f"Loading Faster-Whisper model '{size}'...")
 
     try:
-        _model = WhisperModel(size, device="cuda", compute_type="int8")
+        # Use float16 for GPU as it's the standard high-quality float type
+        _model = WhisperModel(size, device="cuda", compute_type="float16")
         _is_cpu_mode = False
-        log("Model loaded successfully on GPU (INT8).")
+        log("Model loaded successfully on GPU (float16).")
         return True
     except Exception as e:
         log(f"GPU error: {e}", "warning")
-        log("Falling back to CPU (INT8)...", "warning")
+        log("Falling back to CPU (int8)...", "warning")
+        # Use int8 for CPU
         _model = WhisperModel(size, device="cpu", compute_type="int8")
         _is_cpu_mode = True
-        log("Model loaded on CPU (degraded mode).", "warning")
+        log("Model loaded on CPU (degraded mode, int8).", "warning")
         return False
 
 
@@ -102,15 +104,15 @@ def reload_model(new_model_size):
 
         # Try GPU first
         try:
-            new_model = WhisperModel(new_model_size, device="cuda", compute_type="int8")
+            new_model = WhisperModel(new_model_size, device="cuda", compute_type="float16")
             _is_cpu_mode = False
-            log(f"New model '{new_model_size}' loaded on GPU.")
+            log(f"New model '{new_model_size}' loaded on GPU (float16).")
         except Exception as gpu_err:
             log(f"GPU error: {gpu_err}", "warning")
-            log("Falling back to CPU (INT8)...", "warning")
+            log("Falling back to CPU (int8)...", "warning")
             new_model = WhisperModel(new_model_size, device="cpu", compute_type="int8")
             _is_cpu_mode = True
-            log(f"New model '{new_model_size}' loaded on CPU (degraded mode).", "warning")
+            log(f"New model '{new_model_size}' loaded on CPU (int8).", "warning")
 
         _model = new_model
         config.model_size = new_model_size
@@ -121,7 +123,7 @@ def reload_model(new_model_size):
         log("Attempting to reload previous model 'medium'...", "warning")
 
         try:
-            _model = WhisperModel("medium", device="cuda", compute_type="int8")
+            _model = WhisperModel("medium", device="cuda", compute_type="float16")
             config.model_size = "medium"
             _is_cpu_mode = False
         except:
@@ -165,11 +167,17 @@ def transcribe(audio_data, language=None, fast=False):
         return ""
 
     lang = language or config.language
-    beam_size = 1 if fast else 5
+    beam_size = 1 if fast else 10
 
     try:
         # Faster-Whisper returns a generator of segments
-        segments, info = _model.transcribe(audio_data, beam_size=beam_size, language=lang)
+        segments, info = _model.transcribe(
+            audio_data, 
+            beam_size=beam_size, 
+            language=lang,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500)
+        )
 
         # Reconstruct full text
         full_text = []

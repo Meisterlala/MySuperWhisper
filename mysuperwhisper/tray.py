@@ -217,6 +217,14 @@ def _on_toggle_use_clipboard(icon, item):
     log(f"Use clipboard to paste: {'enabled' if config.use_clipboard_to_paste else 'disabled'}")
 
 
+def _on_toggle_live_preview(icon, item):
+    """Toggle live transcription preview."""
+    config.live_preview_enabled = not config.live_preview_enabled
+    if _save_config_callback:
+        _save_config_callback()
+    log(f"Live preview: {'enabled' if config.live_preview_enabled else 'disabled'}")
+
+
 def _on_show_history(icon, item):
     """Open history popup."""
     from . import history
@@ -743,6 +751,11 @@ def _create_menu():
             "Use clipboard to paste",
             _on_toggle_use_clipboard,
             checked=lambda item: config.use_clipboard_to_paste
+        ),
+        pystray.MenuItem(
+            "Live preview",
+            _on_toggle_live_preview,
+            checked=lambda item: config.live_preview_enabled
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("⌨️ Keyboard Shortcuts", hotkeys_menu),

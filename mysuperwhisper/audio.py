@@ -341,6 +341,19 @@ def stop_recording():
         return None
 
 
+def get_current_buffer():
+    """
+    Get the current audio buffer without stopping the recording.
+    Returns the concatenated audio or None.
+    """
+    if not audio_buffer:
+        return None
+    try:
+        return np.concatenate(audio_buffer, axis=0)
+    except:
+        return None
+
+
 def prepare_for_whisper(audio_data):
     """
     Prepare audio data for Whisper transcription.

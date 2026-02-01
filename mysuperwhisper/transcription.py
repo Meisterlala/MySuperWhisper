@@ -135,7 +135,7 @@ def reload_model(new_model_size):
         return False
 
 
-def transcribe(audio_data, language=None, task="transcribe"):
+def transcribe(audio_data, language=None, task="transcribe", fast=False):
     """
     Transcribe audio to text.
 
@@ -143,6 +143,7 @@ def transcribe(audio_data, language=None, task="transcribe"):
         audio_data: Audio data at 16kHz (use audio.prepare_for_whisper first)
         language: Language code ('fr', 'en', 'es', etc.)
                  If None, uses config.language
+        fast: If True, uses beam_size=1 for faster processing (good for live preview)
         task: "transcribe" or "translate" (translate converts to English)
 
     Returns:
@@ -153,10 +154,11 @@ def transcribe(audio_data, language=None, task="transcribe"):
         return ""
 
     lang = language or config.language
+    beam_size = 1 if fast else 5
 
     try:
         # Faster-Whisper returns a generator of segments
-        segments, info = _model.transcribe(audio_data, beam_size=5, language=lang, task=task)
+        segments, info = _model.transcribe(audio_data, beam_size=beam_size, language=lang, task=task)
 
         # Reconstruct full text
         full_text = []

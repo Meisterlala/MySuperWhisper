@@ -64,7 +64,7 @@ class Config:
     def __init__(self):
         # Default values
         self.model_size = "medium"
-        self.language = None  # Auto-detect if None, or use language code like "en", "fr", "es"
+        self.language = "en"
         self.task = "transcribe"  # "transcribe" or "translate"
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
@@ -89,7 +89,7 @@ class Config:
                     data = json.load(f)
 
                 self.model_size = data.get("model_size", "medium")
-                self.language = data.get("language")  # None = auto-detect
+                self.language = data.get("language", "en")
                 self.task = data.get("task", "transcribe")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)

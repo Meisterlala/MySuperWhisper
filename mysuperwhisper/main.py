@@ -138,7 +138,11 @@ def audio_processing_loop():
 
         try:
             # Transcribe
-            text = transcription.transcribe(audio_16k, language=config.language, task=config.task)
+            text = transcription.transcribe(
+                audio_16k,
+                language=config.language,
+                task=config.task,
+            )
 
             if text:
                 log(f"Raw transcription: '{text}'")

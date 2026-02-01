@@ -46,6 +46,16 @@ VALIDATE_KEYWORDS = {
 }
 
 
+# Common Whisper hallucinations or noise transcriptions to filter out
+HALLUCINATIONS = [
+    r'^beep[\.\!]*$',
+    r'^merci d\'avoir regardé cette vidéo[\.\!]*$',
+    r'^sous\-titres réalisés para la communauté d\'amara\.org$',
+    r'^thank you for watching[\.\!]*$',
+    r'^thanks for watching[\.\!]*$',
+]
+
+
 def process_voice_commands(text):
     """
     Process voice commands in transcribed text.
@@ -58,6 +68,12 @@ def process_voice_commands(text):
             - processed_text: Text with commands replaced
             - should_validate: True if Enter key should be pressed
     """
+    # Filter out common hallucinations/beeps
+    for pattern in HALLUCINATIONS:
+        if re.match(pattern, text.strip(), re.IGNORECASE):
+            log(f"Filtered out hallucination: '{text}'")
+            return "", False
+
     should_validate = False
 
     # Replace newline commands with actual newlines

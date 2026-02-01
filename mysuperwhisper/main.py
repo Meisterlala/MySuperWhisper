@@ -110,13 +110,20 @@ def stop_and_process():
     """Stop recording and queue audio for processing."""
     audio_data = audio.stop_recording()
 
-    # Immediate feedback sound
-    play_sound("success")
-
     if audio_data is None:
         play_sound("error")
         tray.update_tray("idle")
         return
+
+    # Check minimum duration (1 second at 48kHz)
+    if len(audio_data) < 48000:
+        log("Recording too short (< 1s), ignoring.", "warning")
+        # No error sound for short recordings as requested
+        tray.update_tray("idle")
+        return
+
+    # Immediate feedback sound
+    play_sound("success")
 
     tray.update_tray("processing")
     processing_queue.put(audio_data)

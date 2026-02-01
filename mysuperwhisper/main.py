@@ -203,11 +203,15 @@ def audio_processing_loop():
             if text:
                 log(f"Raw transcription: '{text}'")
 
-                # Process voice commands
-                processed_text, should_validate = process_voice_commands(text)
-                log(
-                    f"After command processing: '{processed_text}' (validate={should_validate})"
-                )
+                # Process voice commands if enabled
+                if config.voice_commands_enabled:
+                    processed_text, should_validate = process_voice_commands(text)
+                    log(
+                        f"After command processing: '{processed_text}' (validate={should_validate})"
+                    )
+                else:
+                    processed_text = text
+                    should_validate = False
 
                 if processed_text:
                     # Paste the text

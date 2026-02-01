@@ -172,6 +172,14 @@ def _on_open_log_folder(icon, item):
     _open_file_with_default_app(LOG_DIR)
 
 
+def _on_toggle_voice_commands(icon, item):
+    """Toggle voice commands processing."""
+    config.voice_commands_enabled = not config.voice_commands_enabled
+    if _save_config_callback:
+        _save_config_callback()
+    log(f"Voice commands: {'enabled' if config.voice_commands_enabled else 'disabled'}")
+
+
 def _on_toggle_test(icon, item):
     """Toggle microphone test mode."""
     if audio.is_testing_mic():
@@ -427,6 +435,11 @@ def _create_menu():
             "Live preview",
             _on_toggle_live_preview,
             checked=lambda item: config.live_preview_enabled
+        ),
+        pystray.MenuItem(
+            "Voice commands",
+            _on_toggle_voice_commands,
+            checked=lambda item: config.voice_commands_enabled
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("History (Triple Ctrl)", _on_show_history),

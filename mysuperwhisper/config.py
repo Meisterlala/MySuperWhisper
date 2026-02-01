@@ -68,6 +68,7 @@ class Config:
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.live_preview_enabled = True
+        self.voice_commands_enabled = True
         self.input_device = None
         self.output_device = None
 
@@ -83,6 +84,7 @@ class Config:
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.live_preview_enabled = data.get("live_preview_enabled", True)
+                self.voice_commands_enabled = data.get("voice_commands_enabled", True)
                 self.input_device = data.get("input_device")
                 self.output_device = data.get("output_device")
 
@@ -99,6 +101,7 @@ class Config:
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "live_preview_enabled": self.live_preview_enabled,
+                "voice_commands_enabled": self.voice_commands_enabled,
                 "input_device": self.input_device,
                 "output_device": self.output_device
             }

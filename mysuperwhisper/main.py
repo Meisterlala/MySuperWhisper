@@ -65,6 +65,16 @@ def parse_args():
         action="store_true",
         help="Toggle recording on a running instance and exit"
     )
+    parser.add_argument(
+        "--start",
+        action="store_true",
+        help="Start recording on a running instance (no-op if already recording)"
+    )
+    parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop recording on a running instance (no-op if not recording)"
+    )
     return parser.parse_args()
 
 
@@ -231,12 +241,18 @@ def on_quit():
 
 
 def signal_handler(signum, frame):
-    """Handle signals like SIGUSR1 for external toggling."""
+    """Handle signals for external control."""
     if signum == signal.SIGUSR1:
         log("Received SIGUSR1, toggling recording...")
-        # We need to call this from the main thread or ensure it's thread-safe
-        # on_double_ctrl is safe to call from here as it just starts/stops threads/streams
         on_double_ctrl()
+    elif signum == signal.SIGUSR2:
+        log("Received SIGUSR2, ensuring recording is STARTED")
+        if not audio.is_currently_recording():
+            on_double_ctrl()
+    elif signum == signal.SIGRTMIN:
+        log("Received SIGRTMIN, ensuring recording is STOPPED")
+        if audio.is_currently_recording():
+            on_double_ctrl()
 
 
 def check_single_instance():
@@ -286,13 +302,22 @@ def main():
     # Parse arguments first
     args = parse_args()
 
-    # Check if we should just toggle an existing instance
-    if args.toggle:
+    # Check if we should just toggle/start/stop an existing instance
+    if args.toggle or args.start or args.stop:
         pid = get_running_pid()
         if pid:
             try:
-                os.kill(pid, signal.SIGUSR1)
-                print(f"Sent toggle signal to instance with PID {pid}")
+                sig = signal.SIGUSR1
+                action = "toggle"
+                if args.start:
+                    sig = signal.SIGUSR2
+                    action = "start"
+                elif args.stop:
+                    sig = signal.SIGRTMIN
+                    action = "stop"
+                
+                os.kill(pid, sig)
+                print(f"Sent {action} signal to instance with PID {pid}")
                 sys.exit(0)
             except ProcessLookupError:
                 print("Lock file exists but process not found.")
@@ -319,8 +344,10 @@ def main():
     # Restore PulseAudio devices from config
     config.restore_audio_devices()
 
-    # Setup signal handler for SIGUSR1
+    # Setup signal handlers
     signal.signal(signal.SIGUSR1, signal_handler)
+    signal.signal(signal.SIGUSR2, signal_handler)
+    signal.signal(signal.SIGRTMIN, signal_handler)
 
     # Load history
     history.load_history()

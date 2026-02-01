@@ -20,6 +20,11 @@ _last_ctrl_time = 0
 _ctrl_press_count = 0
 _ctrl_action_timer = None
 
+# State for F18 (Push-to-Talk) detection
+_f18_press_time = 0
+_f18_is_pressed = False
+_f18_push_to_talk_mode = False
+
 
 def set_callbacks(on_double_ctrl, on_triple_ctrl, is_recording):
     """
@@ -48,16 +53,43 @@ def _execute_double_ctrl_action():
     _ctrl_action_timer = None
 
 
-def _on_key_release(key):
-    """Handle key release events."""
-    global _last_ctrl_time, _ctrl_press_count, _ctrl_action_timer
+def _on_key_press(key):
+    """Handle key press events."""
+    global _f18_press_time, _f18_is_pressed, _f18_push_to_talk_mode
 
     # Detect F18 key
     if key == keyboard.Key.f18 or (hasattr(key, "vk") and key.vk == 133):
-        log("F18 detected!", "info")
-        if _on_double_ctrl:
-            _on_double_ctrl()
+        if not _f18_is_pressed:
+            _f18_is_pressed = True
+            _f18_press_time = time.time()
+            _f18_push_to_talk_mode = False
+            
+            # Start recording if not already
+            if _is_recording_callback and not _is_recording_callback():
+                if _on_double_ctrl:
+                    _on_double_ctrl()
+
+
+def _on_key_release(key):
+    """Handle key release events."""
+    global _last_ctrl_time, _ctrl_press_count, _ctrl_action_timer
+    global _f18_press_time, _f18_is_pressed, _f18_push_to_talk_mode
+
+    # Detect F18 key
+    if key == keyboard.Key.f18 or (hasattr(key, "vk") and key.vk == 133):
+        _f18_is_pressed = False
+        duration = time.time() - _f18_press_time
+        
+        # If held for > 0.4s (snappier detection), stop recording on release
+        if duration > 0.4:
+            log(f"F18 release (long press: {duration:.2f}s) -> stopping recording")
+            if _is_recording_callback and _is_recording_callback():
+                if _on_double_ctrl:
+                    _on_double_ctrl()
+        else:
+            log(f"F18 release (short press: {duration:.2f}s) -> toggle mode")
         return
+
 
     # Detect Ctrl key (Left or Right)
     if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
@@ -102,7 +134,7 @@ def start_listener():
     Returns:
         keyboard.Listener: The listener instance
     """
-    listener = keyboard.Listener(on_release=_on_key_release)
+    listener = keyboard.Listener(on_press=_on_key_press, on_release=_on_key_release)
     listener.start()
     log("Keyboard listener started")
     return listener

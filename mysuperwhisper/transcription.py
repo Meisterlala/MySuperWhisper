@@ -4,6 +4,41 @@ Handles model loading and speech-to-text conversion.
 """
 
 import gc
+import os
+from pathlib import Path
+
+# Fix CUDA library discovery before importing faster_whisper
+def _pre_import_cuda_fix():
+    project_root = Path(__file__).parent.parent
+    # Look for nvidia libraries in site-packages
+    potential_lib_dirs = list(project_root.glob("venv/lib/python*/site-packages/nvidia/*/lib"))
+    
+    # Also check if we are running inside the venv directly
+    import site
+    for sp in site.getsitepackages():
+        p = Path(sp) / "nvidia"
+        if p.exists():
+            potential_lib_dirs.extend(list(p.glob("*/lib")))
+
+    if potential_lib_dirs:
+        unique_paths = sorted(list(set(str(p.absolute()) for p in potential_lib_dirs)))
+        existing = os.environ.get("LD_LIBRARY_PATH", "")
+        new_path = ":".join(unique_paths + ([existing] if existing else []))
+        os.environ["LD_LIBRARY_PATH"] = new_path
+        
+        # Pre-load cublas and cudnn to help ctranslate2
+        import ctypes
+        for lib_name in ["libcublas.so.12", "libcublasLt.so.12", "libcudnn.so.9"]:
+            for p in unique_paths:
+                lib_path = Path(p) / lib_name
+                if lib_path.exists():
+                    try:
+                        ctypes.CDLL(str(lib_path))
+                    except Exception:
+                        pass
+
+_pre_import_cuda_fix()
+
 from faster_whisper import WhisperModel
 from .config import log, config
 

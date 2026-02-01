@@ -5,3 +5,5 @@ pynput
 pystray
 Pillow>=11.0.0
 pyperclip
+nvidia-cublas-cu12
+nvidia-cudnn-cu12

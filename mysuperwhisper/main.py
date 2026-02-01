@@ -31,6 +31,8 @@ import argparse
 import os
 import queue
 import threading
+import signal
+import sys
 
 from .config import log, config, LOG_FILE, CONFIG_DIR
 from . import audio
@@ -57,6 +59,11 @@ def parse_args():
         "--playback",
         action="store_true",
         help="Enable audio playback after recording (debug)"
+    )
+    parser.add_argument(
+        "--toggle",
+        action="store_true",
+        help="Toggle recording on a running instance and exit"
     )
     return parser.parse_args()
 
@@ -223,6 +230,15 @@ def on_quit():
     os._exit(0)
 
 
+def signal_handler(signum, frame):
+    """Handle signals like SIGUSR1 for external toggling."""
+    if signum == signal.SIGUSR1:
+        log("Received SIGUSR1, toggling recording...")
+        # We need to call this from the main thread or ensure it's thread-safe
+        # on_double_ctrl is safe to call from here as it just starts/stops threads/streams
+        on_double_ctrl()
+
+
 def check_single_instance():
     """
     Ensure only one instance is running using lock file.
@@ -235,32 +251,63 @@ def check_single_instance():
         # Open the lock file (create if runs first)
         f = open(lock_file, 'w')
         # Try to acquire an exclusive lock
-        # LOCK_EX: Exclusive lock
-        # LOCK_NB: Non-blocking (fail if already locked)
         fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         
+        # Write PID to lock file
+        f.write(str(os.getpid()))
+        f.flush()
+        
         # Keep file open to hold lock
-        # We attach it to the module or global scope to prevent GC
         global _instance_lock_file
         _instance_lock_file = f
         return True
     except IOError:
-        # Someone else has the lock
         return False
+
+
+def get_running_pid():
+    """Get the PID of the running instance."""
+    lock_file = "/tmp/mysuperwhisper.lock"
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    return int(content)
+        except Exception:
+            pass
+    return None
 
 
 def main():
     """Main entry point."""
     global args
 
+    # Parse arguments first
+    args = parse_args()
+
+    # Check if we should just toggle an existing instance
+    if args.toggle:
+        pid = get_running_pid()
+        if pid:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+                print(f"Sent toggle signal to instance with PID {pid}")
+                sys.exit(0)
+            except ProcessLookupError:
+                print("Lock file exists but process not found.")
+            except Exception as e:
+                print(f"Error sending signal: {e}")
+                sys.exit(1)
+        else:
+            print("MySuperWhisper is not running.")
+            sys.exit(1)
+
     # Check for existing instance
     if not check_single_instance():
         print("MySuperWhisper is already running!")
         send_notification("MySuperWhisper", "Application is already running.", "dialog-information")
         sys.exit(0)
-
-    # Parse arguments
-    args = parse_args()
 
     log("Starting MySuperWhisper")
     log(f"Config directory: {CONFIG_DIR}")
@@ -271,6 +318,9 @@ def main():
 
     # Restore PulseAudio devices from config
     config.restore_audio_devices()
+
+    # Setup signal handler for SIGUSR1
+    signal.signal(signal.SIGUSR1, signal_handler)
 
     # Load history
     history.load_history()

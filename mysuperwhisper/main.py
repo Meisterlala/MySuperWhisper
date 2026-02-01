@@ -96,12 +96,6 @@ def update_activity():
         audio.start_stream()
         tray.update_tray("idle")
 
-    if not _is_model_loaded:
-        log("Waking up: Reloading model...")
-        tray.update_tray("loading")
-        transcription.load_model()
-        _is_model_loaded = True
-        tray.update_tray("idle")
 
 
 def on_double_ctrl():
@@ -110,7 +104,20 @@ def on_double_ctrl():
     if audio.is_currently_recording():
         stop_and_process()
     else:
+        # If model is not loaded, start loading it in background while recording
+        if not _is_model_loaded:
+            log("Starting record while loading model...")
+            threading.Thread(target=lazy_load_model, daemon=True).start()
         start_recording()
+
+
+def lazy_load_model():
+    """Load model in background without blocking recording."""
+    global _is_model_loaded
+    log("Background model loading started...")
+    transcription.load_model()
+    _is_model_loaded = True
+    log("Background model loading complete.")
 
 
 def on_triple_ctrl():
@@ -172,14 +179,18 @@ def live_preview_worker():
     last_preview_time = time.time()
 
     while _is_recording:
-        time.sleep(0.01)
+        time.sleep(0.05)
         if not config.live_preview_enabled:
             break
 
         now = time.time()
 
-        # Update preview every 0.6 seconds if we have audio
+        # Update preview every 0.6 seconds if we have audio and model is loaded
         if now - last_preview_time >= 0.6:
+            if not _is_model_loaded:
+                # Suspend live output until model is loaded
+                continue
+                
             audio_data = audio.get_current_buffer()
             if audio_data is not None:
                 audio_len = len(audio_data)
@@ -218,6 +229,12 @@ def audio_processing_loop():
                 log(f"Playback error: {e}", "error")
 
         log("Transcribing...")
+
+        # Wait for model to be loaded if it's still loading
+        if not _is_model_loaded:
+            log("Waiting for model to load before transcribing...", "debug")
+            while not _is_model_loaded:
+                time.sleep(0.05)
 
         # Prepare audio for Whisper (downsample to 16kHz)
         audio_16k = audio.prepare_for_whisper(audio_data)

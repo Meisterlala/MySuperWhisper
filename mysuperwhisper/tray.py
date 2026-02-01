@@ -129,6 +129,9 @@ def update_tray(status, level=0.0):
     elif status == "loading":
         color = "yellow"
         detail = "Loading..."
+    elif status == "sleeping":
+        color = "gray"
+        detail = "Sleeping (Inactive)"
 
     if audio.is_testing_mic():
         detail = f"Level: {int(level*100)}%"

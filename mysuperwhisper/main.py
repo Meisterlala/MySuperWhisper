@@ -75,8 +75,26 @@ def parse_args():
     return parser.parse_args()
 
 
+# Global state for sleep mode
+_last_activity_time = time.time()
+_is_sleeping = False
+AUTO_SLEEP_TIMEOUT = 300  # 5 minutes
+
+
+def update_activity():
+    """Update last activity timestamp and wake up if sleeping."""
+    global _last_activity_time, _is_sleeping
+    _last_activity_time = time.time()
+    if _is_sleeping:
+        log("Waking up from sleep mode...")
+        _is_sleeping = False
+        audio.start_stream()
+        tray.update_tray("idle")
+
+
 def on_double_ctrl():
     """Handle Double Ctrl: toggle recording."""
+    update_activity()
     if audio.is_currently_recording():
         stop_and_process()
     else:
@@ -85,13 +103,9 @@ def on_double_ctrl():
 
 def on_triple_ctrl():
     """Handle Triple Ctrl: open history popup."""
+    update_activity()
     if not history.is_popup_open():
         history.open_history_popup_async()
-
-
-# Global state for live preview
-_is_recording = False
-_live_preview_thread = None
 
 
 def start_recording():
@@ -249,6 +263,19 @@ def audio_processing_loop():
 def save_config():
     """Save configuration."""
     config.save()
+
+
+def sleep_monitor_worker():
+    """Monitor for inactivity and put app to sleep."""
+    global _is_sleeping
+    while True:
+        time.sleep(10)
+        if not _is_sleeping and not audio.is_currently_recording():
+            if time.time() - _last_activity_time > AUTO_SLEEP_TIMEOUT:
+                log("Entering sleep mode due to inactivity (5m)...")
+                _is_sleeping = True
+                audio.stop_stream()
+                tray.update_tray("sleeping")
 
 
 def startup_worker():
@@ -412,6 +439,9 @@ def main():
 
     # Start device monitoring
     threading.Thread(target=tray.device_monitor_worker, daemon=True).start()
+
+    # Start sleep monitor
+    threading.Thread(target=sleep_monitor_worker, daemon=True).start()
 
     # Run tray event loop (blocking)
     tray.run_tray()

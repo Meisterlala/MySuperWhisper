@@ -64,6 +64,7 @@ class Config:
     def __init__(self):
         # Default values
         self.model_size = "medium"
+        self.language = "en"  # Default to English
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.input_device = None
@@ -77,6 +78,7 @@ class Config:
                     data = json.load(f)
 
                 self.model_size = data.get("model_size", "medium")
+                self.language = data.get("language", "en")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.input_device = data.get("input_device")
@@ -91,6 +93,7 @@ class Config:
         try:
             data = {
                 "model_size": self.model_size,
+                "language": self.language,
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "input_device": self.input_device,

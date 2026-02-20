@@ -97,7 +97,6 @@ def update_activity():
         tray.update_tray("idle")
 
 
-
 def on_double_ctrl():
     """Handle Double Ctrl: toggle recording."""
     update_activity()
@@ -190,7 +189,7 @@ def live_preview_worker():
             if not _is_model_loaded:
                 # Suspend live output until model is loaded
                 continue
-                
+
             audio_data = audio.get_current_buffer()
             if audio_data is not None:
                 audio_len = len(audio_data)

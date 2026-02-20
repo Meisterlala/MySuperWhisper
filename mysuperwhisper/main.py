@@ -82,7 +82,7 @@ _is_model_loaded = False
 
 # Inactivity timeouts (seconds)
 AUTO_SLEEP_TIMEOUT = 15
-MODEL_UNLOAD_TIMEOUT = 60 * 5
+MODEL_UNLOAD_TIMEOUT = 60 * 30
 
 
 def update_activity():

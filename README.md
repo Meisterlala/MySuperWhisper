@@ -101,6 +101,7 @@ You can use **any key or combination**: modifier keys (Ctrl, Alt, Shift), functi
 
 Right-click the tray icon to access:
 - Enable/disable notifications
+- Toggle "Use clipboard to paste" (off by default — see [Paste behavior](#paste-behavior))
 - Configure keyboard shortcuts
 - View transcription history
 - Test microphone with audio loopback
@@ -145,6 +146,20 @@ Result: Types "Hello", creates a new line, types "How are you", then presses Ent
 
 > **Note**: In standard applications, "new line" uses `Shift+Enter` (soft line break). In **terminal emulators**, it intelligently switches to `Ctrl+Shift+V` to paste the text with actual newlines, ensuring correct behavior.
 
+### Paste behavior
+
+There are two ways to insert the transcribed text, controlled by the
+**"Use clipboard to paste"** tray option (and the `use_clipboard_to_paste`
+config key):
+
+| Mode | `use_clipboard_to_paste` | How it works | Trade-off |
+|------|--------------------------|--------------|-----------|
+| **Direct typing** (default) | `false` | Types the text directly (`xdotool type` / `wtype`) | Your clipboard **and its history stay untouched**. Slightly slower on long texts; some non-Latin scripts (e.g. CJK) may not type reliably depending on your keyboard layout. |
+| **Clipboard paste** | `true` | Copies to the clipboard, then sends `Ctrl+V` / `Ctrl+Shift+V` | Fast and handles any Unicode reliably, but **overwrites the clipboard** (and adds an entry to clipboard-manager history). |
+
+Direct typing is the default so dictation never clobbers what you had copied.
+If you mostly dictate non-Latin scripts, enable clipboard paste.
+
 ## Configuration
 
 Configuration is stored in `~/.config/mysuperwhisper/config.json`:
@@ -161,7 +176,8 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
     "input_device": "Your Microphone",
     "output_device": "Your Speakers",
     "system_notifications_enabled": true,
-    "sound_notifications_enabled": true
+    "sound_notifications_enabled": true,
+    "use_clipboard_to_paste": false
 }
 ```
 
@@ -182,6 +198,7 @@ This example configures:
 - **input_device** / **output_device**: Audio device names (set via tray menu)
 - **system_notifications_enabled**: Show desktop notifications
 - **sound_notifications_enabled**: Play audio beeps
+- **use_clipboard_to_paste**: How transcribed text is inserted (see [Paste behavior](#paste-behavior)). `false` (default) types the text directly and leaves your clipboard untouched; `true` pastes through the system clipboard
 
 **Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts" — a detection popup lets you set shortcuts by simply pressing them, no manual editing needed.
 

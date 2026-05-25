@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 import pyperclip
-from .config import log
+from .config import log, config
 
 
 def detect_session_type():
@@ -65,7 +65,16 @@ def paste_text(text, press_enter=False):
         press_enter: If True, press Enter after pasting
     """
     session_type = detect_session_type()
-    
+
+    # Default mode: type the text directly, leaving the clipboard (and any
+    # clipboard-manager history) untouched. The clipboard path below is opt-in.
+    if not config.use_clipboard_to_paste:
+        _type_text(text, session_type)
+        if press_enter:
+            time.sleep(0.05)
+            _press_key("Return", session_type)
+        return
+
     # Check if we are in a terminal
     if _is_terminal(session_type):
         # Terminals (mostly) use Ctrl+Shift+V for paste
@@ -118,6 +127,32 @@ def _paste_with_newlines(text, session_type):
     for i, line in enumerate(lines):
         if line:
             _paste_clipboard(line, session_type)
+
+        # Add soft newline (Shift+Return) between lines
+        if i < len(lines) - 1:
+            time.sleep(0.03)
+            _press_key("shift+Return", session_type)
+            time.sleep(0.02)
+
+
+def _type_text(text, session_type):
+    """Type text directly, without using the clipboard.
+
+    Newlines are sent as Shift+Return (soft breaks) so chat apps don't submit
+    the message mid-paste, mirroring the clipboard path's behavior.
+    """
+    lines = text.split('\n')
+
+    for i, line in enumerate(lines):
+        if line:
+            try:
+                if session_type == "wayland":
+                    subprocess.run(["wtype", "--", line])
+                else:
+                    subprocess.run(["xdotool", "type", "--clearmodifiers", "--", line])
+            except FileNotFoundError as e:
+                log(f"Typing tool not found: {e}", "error")
+                return
 
         # Add soft newline (Shift+Return) between lines
         if i < len(lines) - 1:

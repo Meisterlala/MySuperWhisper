@@ -56,8 +56,8 @@ chmod +x install.sh
 ### Manual Installation
 
 ```bash
-# System dependencies
-sudo apt install python3-venv python3-pip xdotool libnotify-bin pulseaudio-utils
+# System dependencies (python3-tk is required for the history popup and shortcut config)
+sudo apt install python3-venv python3-pip python3-tk xdotool libnotify-bin pulseaudio-utils
 
 # For Wayland support (optional)
 sudo apt install wtype
@@ -66,6 +66,23 @@ sudo apt install wtype
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Install with pip (without cloning)
+
+You can also install the package straight from GitHub into a virtualenv. You
+still need the GUI/system dependency `python3-tk`:
+
+```bash
+# System dependency for the GUI (tkinter)
+sudo apt install python3-tk
+
+# Create a virtualenv and install the package into it
+python3 -m venv MySuperWhisper
+./MySuperWhisper/bin/pip install -U git+https://github.com/OlivierMary/MySuperWhisper.git
+
+# Run the app
+./MySuperWhisper/bin/mysuperwhisper
 ```
 
 ## Usage

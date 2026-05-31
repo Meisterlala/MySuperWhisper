@@ -276,7 +276,7 @@ def _transcribe_with_preview_model(audio_data):
     return transcriptions[0].strip() if transcriptions else ""
 
 
-def transcribe(audio_data, language=None, task="transcribe", fast=False):
+def transcribe(audio_data, language=None, fast=False):
     """
     Transcribe audio to text.
 
@@ -285,7 +285,6 @@ def transcribe(audio_data, language=None, task="transcribe", fast=False):
         language: Language code ('fr', 'en', 'es', etc.)
                  If None, uses config.language
         fast: If True, uses the preview model when available
-        task: Reserved for compatibility with the previous backend
 
     Returns:
         str: Transcribed text, or empty string if nothing detected

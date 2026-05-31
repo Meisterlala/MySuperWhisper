@@ -116,12 +116,10 @@ def update_tray(status, level=0.0):
     detail = ""
 
     if status == "idle":
-        # Green = transcribe mode, Purple = translate mode
-        color = (138, 43, 226) if config.task == "translate" else "green"
+        color = "green"
         from .keyboard import _get_hotkey_description
         hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-        task_label = "Translate→EN" if config.task == "translate" else "Transcribe"
-        detail = f"Ready ({hotkey_desc}) [{task_label}]"
+        detail = f"Ready ({hotkey_desc})"
     elif status == "recording":
         color = "red"
         detail = "Recording..."
@@ -306,19 +304,6 @@ def _on_select_language(lang_code):
             label = lang_code if lang_code else "Auto-detect"
             log(f"Language changed to: {label}")
             icon.menu = _create_menu()
-    return wrapper
-
-
-def _on_select_task(task_name):
-    """Handler for task selection."""
-    def wrapper(icon, item):
-        if config.task != task_name:
-            config.task = task_name
-            if _save_config_callback:
-                _save_config_callback()
-            log(f"Task changed to: {task_name}")
-            icon.menu = _create_menu()
-            update_tray("idle")
     return wrapper
 
 

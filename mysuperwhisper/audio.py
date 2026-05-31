@@ -372,11 +372,6 @@ def prepare_for_transcription(audio_data):
     return audio_data[::3].flatten()
 
 
-def prepare_for_whisper(audio_data):
-    """Backward-compatible alias for older call sites."""
-    return prepare_for_transcription(audio_data)
-
-
 def is_currently_recording():
     """Check if currently recording."""
     return is_recording

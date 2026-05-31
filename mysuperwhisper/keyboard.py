@@ -32,12 +32,6 @@ MODIFIER_KEYS = frozenset({
     "cmd", "cmd_l", "cmd_r",
 })
 
-# State for F18 (Push-to-Talk) detection
-_f18_press_time = 0
-_f18_is_pressed = False
-_f18_push_to_talk_mode = False
-
-
 def set_callbacks(on_record_hotkey, on_history_hotkey, is_recording):
     """Set callback functions for keyboard shortcuts."""
     global _on_record_hotkey, _on_history_hotkey, _is_recording_callback
@@ -306,18 +300,8 @@ def _cleanup_stale_keys():
 
 
 def _on_key_press(key):
-    """Track currently held keys and push-to-talk presses."""
+    """Track currently held keys."""
     try:
-        if key == keyboard.Key.f18 or (hasattr(key, "vk") and key.vk == 133):
-            global _f18_press_time, _f18_is_pressed, _f18_push_to_talk_mode
-            if not _f18_is_pressed:
-                _f18_is_pressed = True
-                _f18_press_time = time.time()
-                _f18_push_to_talk_mode = False
-
-                if _is_recording_callback and not _is_recording_callback() and _on_record_hotkey:
-                    _on_record_hotkey()
-
         key_name = _get_key_name(key)
         if key_name:
             _held_keys.add(key_name)
@@ -355,21 +339,6 @@ def _on_key_release_inner(key):
             _held_keys_time.pop(key_name, None)
             return
         combo = _build_combo_string(held_mods, key_name)
-
-    if key == keyboard.Key.f18 or (hasattr(key, "vk") and key.vk == 133):
-        global _f18_press_time, _f18_is_pressed, _f18_push_to_talk_mode
-        _f18_is_pressed = False
-        duration = time.time() - _f18_press_time
-        if duration > 0.4:
-            log(f"F18 release (long press: {duration:.2f}s) -> stopping recording")
-            if _is_recording_callback and _is_recording_callback() and _on_record_hotkey:
-                _on_record_hotkey()
-        else:
-            log(f"F18 release (short press: {duration:.2f}s) -> toggle mode")
-
-        _held_keys.discard(key_name)
-        _held_keys_time.pop(key_name, None)
-        return
 
         current_time = time.time()
 

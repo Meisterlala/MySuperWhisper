@@ -1,12 +1,12 @@
 """
-MySuperWhisper - Global voice dictation tool using Whisper AI
+MySuperWhisper - Global voice dictation tool using Granite Speech
 """
 import os
 import sys
 from pathlib import Path
 
-# Automatically detect and add NVIDIA library paths from venv to LD_LIBRARY_PATH
-# This fixes the "libcublas.so.12 not found" error on systems without global CUDA
+# Automatically detect and add NVIDIA library paths from venv to LD_LIBRARY_PATH.
+# This helps local CUDA-enabled torch wheels find bundled NVIDIA libraries.
 def _setup_cuda_paths():
     # Find the venv relative to this file
     # This assumes we are in project/mysuperwhisper/__init__.py

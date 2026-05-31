@@ -68,7 +68,7 @@ mysuperwhisper/
 ├── main.py              # Main application logic
 ├── config.py            # Configuration management
 ├── audio.py             # Audio capture and processing
-├── transcription.py     # Whisper model and transcription
+├── transcription.py     # Granite Speech model and transcription
 ├── voice_commands.py    # Voice command processing
 ├── paste.py             # Text pasting (xdotool/wtype)
 ├── notifications.py     # System and sound notifications

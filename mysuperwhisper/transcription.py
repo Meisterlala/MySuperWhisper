@@ -1,152 +1,274 @@
 """
-Whisper transcription engine for MySuperWhisper.
+Granite speech transcription engine for MySuperWhisper.
 Handles model loading and speech-to-text conversion.
 """
 
 import gc
-import os
-from pathlib import Path
+import importlib
+import importlib.util
+from typing import Any
 
-# Fix CUDA library discovery before importing faster_whisper
-def _pre_import_cuda_fix():
-    project_root = Path(__file__).parent.parent
-    # Look for nvidia libraries in site-packages
-    potential_lib_dirs = list(project_root.glob("venv/lib/python*/site-packages/nvidia/*/lib"))
-    
-    # Also check if we are running inside the venv directly
-    import site
-    for sp in site.getsitepackages():
-        p = Path(sp) / "nvidia"
-        if p.exists():
-            potential_lib_dirs.extend(list(p.glob("*/lib")))
-
-    if potential_lib_dirs:
-        unique_paths = sorted(list(set(str(p.absolute()) for p in potential_lib_dirs)))
-        existing = os.environ.get("LD_LIBRARY_PATH", "")
-        new_path = ":".join(unique_paths + ([existing] if existing else []))
-        os.environ["LD_LIBRARY_PATH"] = new_path
-        
-        # Pre-load cublas and cudnn to help ctranslate2
-        import ctypes
-        for lib_name in ["libcublas.so.12", "libcublasLt.so.12", "libcudnn.so.9"]:
-            for p in unique_paths:
-                lib_path = Path(p) / lib_name
-                if lib_path.exists():
-                    try:
-                        ctypes.CDLL(str(lib_path))
-                    except Exception:
-                        pass
-
-_pre_import_cuda_fix()
-
-from faster_whisper import WhisperModel
 from .config import log, config
 
-# Global model instance
-_model = None
+# Global model instances
+_main_model: Any = None
+_main_processor: Any = None
+_main_tokenizer: Any = None
+_preview_model: Any = None
+_preview_processor: Any = None
+_torch: Any = None
+_transformers: Any = None
 _is_cpu_mode = False
 
 
-def load_model(model_size=None):
-    """
-    Load the Whisper model.
+def _ensure_dependencies():
+    global _torch, _transformers
 
-    Attempts to use GPU (CUDA) first, falls back to CPU if unavailable.
-    Uses float16 on GPU and float32 on CPU for better quality.
+    if _torch is not None and _transformers is not None:
+        return
+
+    try:
+        torch = importlib.import_module("torch")
+        transformers = importlib.import_module("transformers")
+    except ImportError as exc:
+        raise RuntimeError(
+            "Granite speech dependencies are missing. Install torch, torchaudio, transformers, accelerate, and soundfile."
+        ) from exc
+
+    _torch = torch
+    _transformers = transformers
+
+
+def _get_device_and_dtype():
+    if _torch.cuda.is_available():
+        return "cuda", _torch.bfloat16, False
+    return "cpu", _torch.float32, True
+
+
+def _build_prompt():
+    return (
+        "<|audio|>transcribe the speech with proper punctuation and capitalization. "
+        "Output only the transcription as valid plain text. Preserve line breaks when "
+        "the speaker clearly dictates separate lines."
+    )
+
+
+def _estimate_max_new_tokens(audio_data, input_token_count):
+    """Estimate a safe generation budget from the audio duration."""
+    audio_seconds = max(len(audio_data) / 16000.0, 0.0)
+
+    # Dictation usually stays well below this, but a generous budget helps avoid
+    # truncating slower or more verbose speech.
+    estimated_output_tokens = int(audio_seconds * 8) + 128
+
+    generation_config = getattr(_main_model, "generation_config", None)
+    model_max_length = getattr(generation_config, "max_length", None)
+    if not model_max_length:
+        model_max_length = getattr(_main_model.config, "max_position_embeddings", None)
+
+    if model_max_length:
+        available_tokens = max(int(model_max_length) - int(input_token_count), 128)
+        if estimated_output_tokens > available_tokens:
+            log(
+                f"Estimated transcript may exceed model context; limiting generation to {available_tokens} tokens.",
+                "warning",
+            )
+        return min(estimated_output_tokens, available_tokens)
+
+    return estimated_output_tokens
+
+
+def _load_main_model(model_name):
+    global _main_model, _main_processor, _main_tokenizer, _is_cpu_mode
+
+    device, dtype, cpu_mode = _get_device_and_dtype()
+    log(f"Loading Granite transcription model '{model_name}' on {device}...")
+
+    processor = _transformers.AutoProcessor.from_pretrained(model_name)
+    model = _transformers.AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_name,
+        torch_dtype=dtype,
+    )
+    model.to(device)
+    model.eval()
+
+    _main_processor = processor
+    _main_tokenizer = processor.tokenizer
+    _main_model = model
+    _is_cpu_mode = cpu_mode
+
+    if cpu_mode:
+        log("Granite transcription model loaded on CPU (degraded mode).", "warning")
+    else:
+        log("Granite transcription model loaded on GPU.")
+
+
+def _load_preview_model(model_name):
+    global _preview_model, _preview_processor
+
+    _preview_model = None
+    _preview_processor = None
+
+    if not _torch.cuda.is_available():
+        log("Live preview model disabled because CUDA is unavailable.", "warning")
+        return
+
+    if importlib.util.find_spec("flash_attn") is None:
+        log("Live preview model disabled because flash-attn is not installed.", "warning")
+        return
+
+    try:
+        log(f"Loading Granite preview model '{model_name}' on cuda...")
+        processor = _transformers.AutoProcessor.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+        )
+        model = _transformers.AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+            torch_dtype=_torch.bfloat16,
+        )
+        model.to("cuda")
+        model.eval()
+        _preview_processor = processor
+        _preview_model = model
+        log("Granite preview model loaded on GPU.")
+    except Exception as exc:
+        _preview_model = None
+        _preview_processor = None
+        log(f"Preview model unavailable: {exc}", "warning")
+
+
+def load_model(model_name=None):
+    """
+    Load the Granite speech models.
 
     Args:
-        model_size: Model size ('tiny', 'base', 'small', 'medium', 'large-v3')
-                   If None, uses config.model_size
+        model_name: Optional main transcription model override.
 
     Returns:
         bool: True if GPU mode, False if CPU mode
     """
-    global _model, _is_cpu_mode
+    _ensure_dependencies()
 
-    size = model_size or config.model_size
-    log(f"Loading Faster-Whisper model '{size}'...")
-
-    try:
-        # Use float16 for GPU as it's the standard high-quality float type
-        _model = WhisperModel(size, device="cuda", compute_type="float16")
-        _is_cpu_mode = False
-        log("Model loaded successfully on GPU (float16).")
-        return True
-    except Exception as e:
-        log(f"GPU error: {e}", "warning")
-        log("Falling back to CPU (int8)...", "warning")
-        # Use int8 for CPU
-        _model = WhisperModel(size, device="cpu", compute_type="int8")
-        _is_cpu_mode = True
-        log("Model loaded on CPU (degraded mode, int8).", "warning")
-        return False
+    selected_model = model_name or config.transcription_model
+    _load_main_model(selected_model)
+    _load_preview_model(config.preview_model)
+    return not _is_cpu_mode
 
 
-def reload_model(new_model_size):
+def reload_model(new_model_name=None, preview_model_name=None):
     """
-    Reload the model with a different size.
+    Reload Granite speech models.
 
     Args:
-        new_model_size: New model size to load
+        new_model_name: New main transcription model to load
+        preview_model_name: New preview model to load
 
     Returns:
         bool: True if successful
     """
-    global _model, _is_cpu_mode
+    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
 
-    log(f"Model change requested: {config.model_size} -> {new_model_size}...")
+    _ensure_dependencies()
+
+    target_main_model = new_model_name or config.transcription_model
+    target_preview_model = preview_model_name or config.preview_model
+    log(
+        f"Reloading Granite models: main='{target_main_model}', preview='{target_preview_model}'..."
+    )
 
     try:
-        # Delete old model first to free memory
-        if _model:
-            del _model
-            gc.collect()
-
-        # Try GPU first
-        try:
-            new_model = WhisperModel(new_model_size, device="cuda", compute_type="float16")
-            _is_cpu_mode = False
-            log(f"New model '{new_model_size}' loaded on GPU (float16).")
-        except Exception as gpu_err:
-            log(f"GPU error: {gpu_err}", "warning")
-            log("Falling back to CPU (int8)...", "warning")
-            new_model = WhisperModel(new_model_size, device="cpu", compute_type="int8")
-            _is_cpu_mode = True
-            log(f"New model '{new_model_size}' loaded on CPU (int8).", "warning")
-
-        _model = new_model
-        config.model_size = new_model_size
+        unload_model()
+        _load_main_model(target_main_model)
+        _load_preview_model(target_preview_model)
+        config.transcription_model = target_main_model
+        config.preview_model = target_preview_model
         return True
 
-    except Exception as e:
-        log(f"Error loading model {new_model_size}: {e}", "error")
-        log("Attempting to reload previous model 'medium'...", "warning")
-
-        try:
-            _model = WhisperModel("medium", device="cuda", compute_type="float16")
-            config.model_size = "medium"
-            _is_cpu_mode = False
-        except:
-            try:
-                _model = WhisperModel("medium", device="cpu", compute_type="int8")
-                config.model_size = "medium"
-                _is_cpu_mode = True
-            except:
-                pass
-
+    except Exception as exc:
+        log(f"Error reloading Granite models: {exc}", "error")
+        _main_model = None
+        _main_processor = None
+        _main_tokenizer = None
+        _preview_model = None
+        _preview_processor = None
         return False
 
 
 def unload_model():
-    """Unload the Whisper model to free memory/VRAM."""
-    global _model
-    if _model:
+    """Unload Granite speech models to free memory/VRAM."""
+    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor, _is_cpu_mode
+
+    unloaded = False
+
+    if _main_model or _preview_model:
         log("Unloading model to free resources...")
-        del _model
-        _model = None
+
+    if _main_model:
+        del _main_model
+        _main_model = None
+        unloaded = True
+
+    if _preview_model:
+        del _preview_model
+        _preview_model = None
+        unloaded = True
+
+    _main_processor = None
+    _main_tokenizer = None
+    _preview_processor = None
+    _is_cpu_mode = False
+
+    if unloaded:
         gc.collect()
-        return True
-    return False
+    return unloaded
+
+
+def _transcribe_with_main_model(audio_data):
+    device, _, _ = _get_device_and_dtype()
+    prompt = _build_prompt()
+    chat = [{"role": "user", "content": prompt}]
+    prompt_text = _main_tokenizer.apply_chat_template(
+        chat,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    model_inputs = _main_processor(
+        prompt_text,
+        audio_data,
+        return_tensors="pt",
+    ).to(device)
+    max_new_tokens = _estimate_max_new_tokens(
+        audio_data,
+        model_inputs["input_ids"].shape[-1],
+    )
+
+    with _torch.inference_mode():
+        model_outputs = _main_model.generate(
+            **model_inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            num_beams=1,
+        )
+
+    num_input_tokens = model_inputs["input_ids"].shape[-1]
+    new_tokens = model_outputs[:, num_input_tokens:]
+    output_text = _main_tokenizer.batch_decode(
+        new_tokens,
+        add_special_tokens=False,
+        skip_special_tokens=True,
+    )
+    return output_text[0].strip() if output_text else ""
+
+
+def _transcribe_with_preview_model(audio_data):
+    inputs = _preview_processor([audio_data], device="cuda")
+    with _torch.inference_mode():
+        output = _preview_model.transcribe(**inputs)
+    transcriptions = _preview_processor.batch_decode(output.preds)
+    return transcriptions[0].strip() if transcriptions else ""
 
 
 def transcribe(audio_data, language=None, task="transcribe", fast=False):
@@ -154,42 +276,30 @@ def transcribe(audio_data, language=None, task="transcribe", fast=False):
     Transcribe audio to text.
 
     Args:
-        audio_data: Audio data at 16kHz (use audio.prepare_for_whisper first)
+        audio_data: Audio data at 16kHz (use audio.prepare_for_transcription first)
         language: Language code ('fr', 'en', 'es', etc.)
                  If None, uses config.language
-        fast: If True, uses beam_size=1 for faster processing (good for live preview)
-        task: "transcribe" or "translate" (translate converts to English)
+        fast: If True, uses the preview model when available
+        task: Reserved for compatibility with the previous backend
 
     Returns:
         str: Transcribed text, or empty string if nothing detected
     """
-    if _model is None:
+    if _main_model is None:
         log("Model not loaded!", "error")
         return ""
 
     lang = language or config.language
-    beam_size = 1 if fast else 10
+    if lang:
+        log(f"Transcribing with configured voice-command language '{lang}'.", "debug")
 
     try:
-        # Faster-Whisper returns a generator of segments
-        segments, info = _model.transcribe(
-            audio_data,
-            beam_size=beam_size,
-            language=lang,
-            task=task,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500),
-        )
+        if fast and _preview_model is not None:
+            return _transcribe_with_preview_model(audio_data)
+        return _transcribe_with_main_model(audio_data)
 
-        # Reconstruct full text
-        full_text = []
-        for segment in segments:
-            full_text.append(segment.text)
-
-        return " ".join(full_text).strip()
-
-    except Exception as e:
-        log(f"Transcription error: {e}", "error")
+    except Exception as exc:
+        log(f"Transcription error: {exc}", "error")
         raise
 
 
@@ -200,4 +310,4 @@ def is_cpu_mode():
 
 def is_model_loaded():
     """Check if model is loaded."""
-    return _model is not None
+    return _main_model is not None

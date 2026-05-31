@@ -18,7 +18,7 @@ from .config import log, config
 
 # Audio settings
 SAMPLE_RATE = 48000  # Best hardware compatibility
-WHISPER_SAMPLE_RATE = 16000  # Whisper expects 16kHz
+TRANSCRIPTION_SAMPLE_RATE = 16000  # Granite speech models expect 16kHz
 
 # Global state
 audio_buffer = []
@@ -354,22 +354,27 @@ def get_current_buffer():
         return None
 
 
-def prepare_for_whisper(audio_data):
+def prepare_for_transcription(audio_data):
     """
-    Prepare audio data for Whisper transcription.
+    Prepare audio data for speech transcription.
 
-    Whisper expects 16kHz mono audio. We capture at 48kHz for better
+    Granite speech models expect 16kHz mono audio. We capture at 48kHz for better
     hardware compatibility, so we downsample here.
 
     Args:
         audio_data: Raw audio at 48kHz
 
     Returns:
-        numpy.ndarray: Audio at 16kHz suitable for Whisper
+        numpy.ndarray: Audio at 16kHz suitable for Granite speech models
     """
     # Downsample from 48kHz to 16kHz (keep every 3rd sample)
     # 48000 / 3 = 16000
     return audio_data[::3].flatten()
+
+
+def prepare_for_whisper(audio_data):
+    """Backward-compatible alias for older call sites."""
+    return prepare_for_transcription(audio_data)
 
 
 def is_currently_recording():

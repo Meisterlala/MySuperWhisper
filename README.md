@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Global Voice Dictation for Linux using Whisper AI</strong>
+  <strong>Global Voice Dictation for Linux using IBM Granite Speech</strong>
 </p>
 
 <p align="center">
@@ -19,13 +19,14 @@
 
 ---
 
-MySuperWhisper is a Linux desktop application that provides **global voice-to-text transcription** using OpenAI's Whisper model. Simply press **Double Ctrl** anywhere on your system to start recording, speak, and press **Double Ctrl** again - your speech is transcribed and automatically typed into any application.
+MySuperWhisper is a Linux desktop application that provides **global voice-to-text transcription** using IBM Granite Speech models. Press **Double Ctrl** anywhere on your system to start recording, speak, and press **Double Ctrl** again - your speech is transcribed and automatically typed into any application.
 
 ## Features
 
-- 🎤 **Global Hotkey** - Fully configurable shortcut works in any application
-- 🚀 **GPU Acceleration** - Uses CUDA with INT8 quantization for fast transcription
-- 🧠 **Multiple Models** - Choose from tiny to large-v3 based on your needs
+- 🎤 **Global Hotkey** - Fully configurable shortcuts work in any application
+- 🚀 **GPU Acceleration** - Uses CUDA when available, with CPU fallback for final transcription
+- 🧠 **Granite Speech Backend** - Final transcription uses `ibm-granite/granite-speech-4.1-2b`
+- 👀 **Fast Live Preview** - Live preview uses `ibm-granite/granite-speech-4.1-2b-nar` when supported
 - 🗣️ **Voice Commands** - Say "new line" or "enter" to control text formatting
 - 📜 **History** - Triple Ctrl opens recent transcriptions for quick re-use
 - 🔔 **Notifications** - Audio beeps and system notifications for feedback
@@ -36,7 +37,7 @@ MySuperWhisper is a Linux desktop application that provides **global voice-to-te
 
 - Linux (X11 or Wayland)
 - Python 3.8+
-- NVIDIA GPU with CUDA (optional, falls back to CPU)
+- NVIDIA GPU with CUDA recommended
 - PulseAudio or PipeWire
 
 ## Installation
@@ -66,6 +67,9 @@ sudo apt install wtype
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Optional but recommended for Granite live preview on GPU
+pip install flash-attn --no-build-isolation
 ```
 
 ### Install with pip (without cloning)
@@ -122,8 +126,7 @@ Right-click the tray icon to access:
 - Configure keyboard shortcuts
 - View transcription history
 - Test microphone with audio loopback
-- Select AI model size
-- Select language and transcription task
+- Reload speech models
 - Choose input/output audio devices
 - Open configuration files
 
@@ -183,9 +186,9 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
 
 ```json
 {
-    "model_size": "medium",
+    "transcription_model": "ibm-granite/granite-speech-4.1-2b",
+    "preview_model": "ibm-granite/granite-speech-4.1-2b-nar",
     "language": "en",
-    "task": "transcribe",
     "record_hotkey": "ctrl_l+a",
     "record_press_count": 2,
     "history_hotkey": "ctrl_l",
@@ -199,15 +202,15 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
 ```
 
 This example configures:
+- Granite main and preview speech models
 - Double press of Left Ctrl + A for recording
 - Triple press of Left Ctrl for history
-- English language transcription
+- English voice-command language
 
 ### Configuration Options
 
-- **model_size**: Size of Whisper model (see Model Sizes table below)
-- **language**: Language code for transcription (`"en"`, `"fr"`, `"es"`, etc.) or `null` for auto-detection
-- **task**: Either `"transcribe"` (default) or `"translate"` (translates audio to English)
+- **transcription_model** / **preview_model**: Granite model identifiers for final transcription and live preview
+- **language**: Language used for voice-command processing
 - **record_hotkey**: Key or combination for recording - any key (`"ctrl_l"`, `"f1"`, `"a"`) or combination (`"ctrl_l+a"`, `"alt+space"`)
 - **record_press_count**: Number of presses for recording - `1` (single), `2` (double), or `3` (triple)
 - **history_hotkey**: Key or combination for opening history popup
@@ -217,17 +220,14 @@ This example configures:
 - **sound_notifications_enabled**: Play audio beeps
 - **use_clipboard_to_paste**: How transcribed text is inserted (see [Paste behavior](#paste-behavior)). `false` (default) types the text directly and leaves your clipboard untouched; `true` pastes through the system clipboard
 
-**Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts" — a detection popup lets you set shortcuts by simply pressing them, no manual editing needed.
+**Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts".
 
-### Model Sizes
+### Model Behavior
 
-| Model | VRAM | Speed | Accuracy |
-|-------|------|-------|----------|
-| tiny | ~1GB | Fastest | Basic |
-| base | ~1GB | Fast | Good |
-| small | ~2GB | Medium | Better |
-| **medium** | ~2GB | Standard | **Recommended** |
-| large-v3 | ~3.3GB | Slow | Best |
+| Component | Model | Notes |
+|-----------|-------|-------|
+| Final transcription | `ibm-granite/granite-speech-4.1-2b` | Main ASR model used for pasted text |
+| Live preview | `ibm-granite/granite-speech-4.1-2b-nar` | Optional fast preview model; requires CUDA and `flash-attn` |
 
 ## File Locations
 
@@ -247,7 +247,7 @@ MySuperWhisper/
 │   ├── main.py              # Application logic
 │   ├── config.py            # Configuration management
 │   ├── audio.py             # Audio capture
-│   ├── transcription.py     # Whisper integration
+│   ├── transcription.py     # Granite Speech integration
 │   ├── voice_commands.py    # Voice command processing
 │   ├── paste.py             # Text input simulation
 │   ├── notifications.py     # Notifications
@@ -270,8 +270,8 @@ MySuperWhisper/
 
 ### Slow transcription
 - Ensure CUDA is available for GPU acceleration
-- Try a smaller model (tiny, base, small)
 - Check if running in CPU mode (indicated in tray tooltip with [CPU])
+- Live preview is disabled automatically when the preview model requirements are unavailable
 
 ### GPU issues after driver update
 - If you recently updated your NVIDIA drivers, the app might fallback to CPU mode or fail to load the model.
@@ -291,7 +291,8 @@ MySuperWhisper uses these excellent open-source projects:
 
 | Package | Purpose | License |
 |---------|---------|---------|
-| [faster-whisper](https://github.com/guillaumekln/faster-whisper) | Whisper implementation | MIT |
+| [transformers](https://github.com/huggingface/transformers) | Granite Speech model runtime | Apache-2.0 |
+| [torch](https://pytorch.org/) | Model execution | BSD-style |
 | [pynput](https://github.com/moses-palmer/pynput) | Keyboard monitoring | LGPL-3.0 |
 | [pystray](https://github.com/moses-palmer/pystray) | System tray | LGPL-3.0 |
 | [sounddevice](https://python-sounddevice.readthedocs.io/) | Audio capture | MIT |
@@ -309,8 +310,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- OpenAI for the Whisper model
-- The faster-whisper team for the optimized implementation
+- IBM for the Granite Speech models
+- Hugging Face for the Transformers runtime
 - All contributors and users of this project
 
 ---

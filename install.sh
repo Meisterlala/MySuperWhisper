@@ -191,7 +191,7 @@ if [ -f "$PROJECT_DIR/requirements.txt" ]; then
     "$VENV_PIP" install --upgrade -r "$PROJECT_DIR/requirements.txt"
 else
     echo -e "${YELLOW}   requirements.txt non trouvé, installation manuelle...${NC}"
-    "$VENV_PIP" install --upgrade faster-whisper sounddevice numpy pynput pystray Pillow pyperclip
+    "$VENV_PIP" install --upgrade torch torchaudio transformers accelerate huggingface-hub soundfile sounddevice numpy pynput pystray Pillow pyperclip
 fi
 
 # =============================================================================

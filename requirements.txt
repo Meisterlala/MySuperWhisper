@@ -1,9 +1,12 @@
-faster-whisper
+torch
+torchaudio
+transformers>=5.5.3
+accelerate
+huggingface-hub
+soundfile
 sounddevice
 numpy<2.0
 pynput
 pystray
 Pillow>=12.1.1
 pyperclip
-nvidia-cublas-cu12
-nvidia-cudnn-cu12

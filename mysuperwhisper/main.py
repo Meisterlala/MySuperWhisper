@@ -3,13 +3,13 @@
 MySuperWhisper - Global Voice Dictation Tool
 
 A Linux desktop application that provides global voice-to-text transcription
-using OpenAI's Whisper model. Press Double Ctrl to start/stop recording,
+using IBM Granite Speech models. Press Double Ctrl to start/stop recording,
 and the transcribed text is automatically typed into any application.
 
 Features:
 - Global hotkey (Double Ctrl) works in any application
-- Supports multiple Whisper model sizes (tiny to large-v3)
-- GPU acceleration with INT8 quantization
+- Final transcription with Granite Speech 4.1 2B
+- Live preview with Granite Speech 4.1 2B NAR when available
 - Voice commands for newlines and validation
 - Transcription history with Triple Ctrl
 - System tray integration
@@ -195,7 +195,7 @@ def live_preview_worker():
                 audio_len = len(audio_data)
                 if audio_len > 32000:  # Min ~0.7s of audio
                     try:
-                        audio_16k = audio.prepare_for_whisper(audio_data)
+                        audio_16k = audio.prepare_for_transcription(audio_data)
                         # Use fast mode (beam_size=1) for live preview
                         text = transcription.transcribe(audio_16k, fast=True)
                         # log(f"Live preview text: '{text}'", "debug")
@@ -235,8 +235,8 @@ def audio_processing_loop():
             while not _is_model_loaded:
                 time.sleep(0.05)
 
-        # Prepare audio for Whisper (downsample to 16kHz)
-        audio_16k = audio.prepare_for_whisper(audio_data)
+        # Prepare audio for Granite speech transcription (downsample to 16kHz)
+        audio_16k = audio.prepare_for_transcription(audio_data)
 
         try:
             # Transcribe

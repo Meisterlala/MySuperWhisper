@@ -63,9 +63,10 @@ class Config:
 
     def __init__(self):
         # Default values
-        self.model_size = "medium"
-        self.language = "en"
-        self.task = "transcribe"  # "transcribe" or "translate"
+        self.transcription_model = "ibm-granite/granite-speech-4.1-2b"
+        self.preview_model = "ibm-granite/granite-speech-4.1-2b-nar"
+        self.language = "en"  # Default to English
+        self.task = "transcribe"
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.live_preview_enabled = True
@@ -91,7 +92,11 @@ class Config:
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
 
-                self.model_size = data.get("model_size", "medium")
+                legacy_model_size = data.get("model_size")
+                self.transcription_model = data.get(
+                    "transcription_model", self.transcription_model
+                )
+                self.preview_model = data.get("preview_model", self.preview_model)
                 self.language = data.get("language", "en")
                 self.task = data.get("task", "transcribe")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
@@ -108,6 +113,12 @@ class Config:
                 self.record_press_count = data.get("record_press_count", 2)
                 self.history_hotkey = data.get("history_hotkey", "ctrl_l")
                 self.history_press_count = data.get("history_press_count", 3)
+
+                if legacy_model_size and "transcription_model" not in data:
+                    log(
+                        f"Ignoring legacy Whisper model_size='{legacy_model_size}' and using Granite defaults.",
+                        "warning",
+                    )
 
                 log(f"Configuration loaded from {CONFIG_FILE}")
                 if self.language:
@@ -135,7 +146,8 @@ class Config:
         """Save configuration to file."""
         try:
             data = {
-                "model_size": self.model_size,
+                "transcription_model": self.transcription_model,
+                "preview_model": self.preview_model,
                 "language": self.language,
                 "task": self.task,
                 "system_notifications_enabled": self.system_notifications_enabled,

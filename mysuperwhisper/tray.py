@@ -107,8 +107,8 @@ def update_tray(status, level=0.0):
     current_level = getattr(_tray_icon, "_last_level", -1.0)
     if status == current_status and abs(level - current_level) < 0.05:
         return
-    _tray_icon._last_status = status
-    _tray_icon._last_level = level
+    setattr(_tray_icon, "_last_status", status)
+    setattr(_tray_icon, "_last_level", level)
 
     # Constant prefix to prevent icon reordering
     prefix = "MySuperWhisper: "
@@ -273,19 +273,16 @@ def _on_open_sound_settings(icon, item):
         log(f"Error opening sound settings: {e}", "error")
 
 
-def _on_select_model(name):
-    """Create handler for model selection."""
-    def wrapper(icon, item):
-        if config.model_size != name:
-            def _reload():
-                update_tray("loading")
-                transcription.reload_model(name)
-                if _save_config_callback:
-                    _save_config_callback()
-                update_tray("idle")
+def _on_reload_models(icon, item):
+    """Reload Granite speech models."""
+    def _reload():
+        update_tray("loading")
+        transcription.reload_model()
+        if _save_config_callback:
+            _save_config_callback()
+        update_tray("idle")
 
-            threading.Thread(target=_reload, daemon=True).start()
-    return wrapper
+    threading.Thread(target=_reload, daemon=True).start()
 
 
 def _on_select_language(lang_code):
@@ -621,7 +618,7 @@ def _create_menu():
                 current_mic_bg = s['description']
                 break
         else:
-            current_mic_bg = config.input_device
+            current_mic_bg = config.input_device or "Unknown"
 
     if len(current_mic_bg) > 30:
         current_mic_bg = current_mic_bg[:27] + "..."
@@ -644,94 +641,13 @@ def _create_menu():
                 current_spk_bg = s['description']
                 break
         else:
-            current_spk_bg = config.output_device
+            current_spk_bg = config.output_device or "Unknown"
 
     if len(current_spk_bg) > 30:
         current_spk_bg = current_spk_bg[:27] + "..."
 
     spk_label = f"🔊 {current_spk_bg}" + (" (Default)" if is_spk_default else "")
 
-
-    # Model menu
-    model_menu = pystray.Menu(
-        pystray.MenuItem(
-            "Tiny (Very fast, less accurate)",
-            _on_select_model("tiny"),
-            checked=lambda item: config.model_size == "tiny",
-            radio=True
-        ),
-        pystray.MenuItem(
-            "Base (Fast)",
-            _on_select_model("base"),
-            checked=lambda item: config.model_size == "base",
-            radio=True
-        ),
-        pystray.MenuItem(
-            "Small (Balanced)",
-            _on_select_model("small"),
-            checked=lambda item: config.model_size == "small",
-            radio=True
-        ),
-        pystray.MenuItem(
-            "Medium (Standard, <2GB VRAM)",
-            _on_select_model("medium"),
-            checked=lambda item: config.model_size == "medium",
-            radio=True
-        ),
-        pystray.MenuItem(
-            "Large-v3 (Best, ~3.3GB VRAM)",
-            _on_select_model("large-v3"),
-            checked=lambda item: config.model_size == "large-v3",
-            radio=True
-        )
-    )
-
-    # Language menu
-    languages = [
-        (None, "Auto-detect"),
-        ("en", "English"),
-        ("fr", "Français"),
-        ("es", "Español"),
-        ("de", "Deutsch"),
-        ("it", "Italiano"),
-        ("pt", "Português"),
-        ("nl", "Nederlands"),
-        ("ja", "日本語"),
-        ("zh", "中文"),
-        ("ko", "한국어"),
-        ("ru", "Русский"),
-        ("ar", "العربية"),
-        ("pl", "Polski"),
-        ("uk", "Українська"),
-    ]
-
-    language_menu = pystray.Menu(
-        *[
-            pystray.MenuItem(
-                label,
-                _on_select_language(code),
-                checked=lambda item, c=code: config.language == c,
-                radio=True
-            )
-            for code, label in languages
-        ]
-    )
-
-    # Task menu with color legend
-    task_menu = pystray.Menu(
-        pystray.MenuItem(
-            "🟢 Transcribe (keep original language)",
-            _on_select_task("transcribe"),
-            checked=lambda item: config.task == "transcribe",
-            radio=True
-        ),
-        pystray.MenuItem(
-            "🟣 Translate (to English)",
-            _on_select_task("translate"),
-            checked=lambda item: config.task == "translate",
-            radio=True
-        ),
-    )
 
     # Hotkey configuration
     from .keyboard import _get_hotkey_description
@@ -749,7 +665,6 @@ def _create_menu():
             _on_configure_history_shortcut
         ),
     )
-
     # Files submenu
     files_menu = pystray.Menu(
         pystray.MenuItem("Open configuration", _on_open_config),
@@ -797,12 +712,7 @@ def _create_menu():
             _on_toggle_test,
             checked=lambda item: audio.is_testing_mic()
         ),
-        pystray.MenuItem("AI Model", model_menu),
-        pystray.MenuItem("🌐 Language", language_menu),
-        pystray.MenuItem(
-            f"📝 Task: {'🟣 Translate→EN' if config.task == 'translate' else '🟢 Transcribe'}",
-            task_menu
-        ),
+        pystray.MenuItem("Reload speech models", _on_reload_models),
         pystray.Menu.SEPARATOR,
         
         # Audio Devices

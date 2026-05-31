@@ -46,7 +46,7 @@ VALIDATE_KEYWORDS = {
 }
 
 
-# Common Whisper hallucinations or noise transcriptions to filter out
+# Common ASR hallucinations or noise transcriptions to filter out
 HALLUCINATIONS = [
     r'^beep[\.\!]*$',
     r'^merci d\'avoir regardé cette vidéo[\.\!]*$',
@@ -61,7 +61,7 @@ def process_voice_commands(text):
     Process voice commands in transcribed text.
 
     Args:
-        text: Raw transcribed text from Whisper
+        text: Raw transcribed text from the speech model
 
     Returns:
         tuple: (processed_text, should_validate)

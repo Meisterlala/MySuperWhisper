@@ -246,6 +246,17 @@ def _on_toggle_live_preview(icon, item):
     log(f"Live preview: {'enabled' if config.live_preview_enabled else 'disabled'}")
 
 
+def _on_toggle_chunked_ahead_decoding(icon, item):
+    """Toggle silence-aware ahead-of-stop chunk transcription."""
+    config.chunked_ahead_decoding_enabled = not config.chunked_ahead_decoding_enabled
+    if _save_config_callback:
+        _save_config_callback()
+    log(
+        "Chunked preemptive decoding: "
+        f"{'enabled' if config.chunked_ahead_decoding_enabled else 'disabled'}"
+    )
+
+
 def _on_show_history(icon, item):
     """Open history popup."""
     from . import history
@@ -692,6 +703,11 @@ def _create_menu():
             "Live preview",
             _on_toggle_live_preview,
             checked=lambda item: config.live_preview_enabled
+        ),
+        pystray.MenuItem(
+            "Chunked preemptive decoding",
+            _on_toggle_chunked_ahead_decoding,
+            checked=lambda item: config.chunked_ahead_decoding_enabled
         ),
         pystray.MenuItem(
             "Voice commands",

@@ -6,6 +6,7 @@ Handles model loading and speech-to-text conversion.
 import gc
 import importlib
 import importlib.util
+import threading
 from typing import Any
 
 from .config import log, config
@@ -19,6 +20,7 @@ _preview_processor: Any = None
 _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
+_model_lock = threading.Lock()
 
 
 def _ensure_dependencies():
@@ -49,7 +51,8 @@ def _build_prompt():
     return (
         "<|audio|>transcribe the speech with proper punctuation and capitalization. "
         "Output only the transcription as valid plain text. Preserve line breaks when "
-        "the speaker clearly dictates separate lines."
+        "the speaker clearly dictates separate lines. Use multiple paragraphs when "
+        "the dictation naturally forms separate paragraphs or ideas."
     )
 
 
@@ -245,13 +248,14 @@ def _transcribe_with_main_model(audio_data):
         model_inputs["input_ids"].shape[-1],
     )
 
-    with _torch.inference_mode():
-        model_outputs = _main_model.generate(
-            **model_inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            num_beams=1,
-        )
+    with _model_lock:
+        with _torch.inference_mode():
+            model_outputs = _main_model.generate(
+                **model_inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                num_beams=1,
+            )
 
     num_input_tokens = model_inputs["input_ids"].shape[-1]
     new_tokens = model_outputs[:, num_input_tokens:]
@@ -265,8 +269,9 @@ def _transcribe_with_main_model(audio_data):
 
 def _transcribe_with_preview_model(audio_data):
     inputs = _preview_processor([audio_data], device="cuda")
-    with _torch.inference_mode():
-        output = _preview_model.transcribe(**inputs)
+    with _model_lock:
+        with _torch.inference_mode():
+            output = _preview_model.transcribe(**inputs)
     transcriptions = _preview_processor.batch_decode(output.preds)
     return transcriptions[0].strip() if transcriptions else ""
 

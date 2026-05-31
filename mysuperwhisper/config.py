@@ -70,6 +70,7 @@ class Config:
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.live_preview_enabled = True
+        self.chunked_ahead_decoding_enabled = False
         self.voice_commands_enabled = True
         self.unload_model_after_inactivity = True
         self.input_device = None
@@ -102,6 +103,9 @@ class Config:
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.live_preview_enabled = data.get("live_preview_enabled", True)
+                self.chunked_ahead_decoding_enabled = data.get(
+                    "chunked_ahead_decoding_enabled", False
+                )
                 self.voice_commands_enabled = data.get("voice_commands_enabled", True)
                 self.unload_model_after_inactivity = data.get("unload_model_after_inactivity", True)
                 self.input_device = data.get("input_device")
@@ -153,6 +157,7 @@ class Config:
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "live_preview_enabled": self.live_preview_enabled,
+                "chunked_ahead_decoding_enabled": self.chunked_ahead_decoding_enabled,
                 "voice_commands_enabled": self.voice_commands_enabled,
                 "unload_model_after_inactivity": self.unload_model_after_inactivity,
                 "input_device": self.input_device,

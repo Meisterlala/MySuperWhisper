@@ -31,10 +31,13 @@ sys.path.append("/usr/lib/python3/dist-packages")
 import argparse
 import os
 import queue
+import re
 import signal
 import sys
 import threading
 import time
+
+import numpy as np
 
 from . import audio, history, keyboard, transcription, tray
 from .config import CONFIG_DIR, LOG_FILE, config, log
@@ -47,6 +50,15 @@ processing_queue = queue.Queue()
 
 # Command line arguments
 args = None
+
+# Chunked ahead decoding tuning
+CHUNK_CHECK_INTERVAL = 1.0
+CHUNK_MIN_COMMIT_SECONDS = 8.0
+CHUNK_TAIL_SECONDS = 4.0
+CHUNK_OVERLAP_SECONDS = 1.5
+CHUNK_MAX_WINDOW_SECONDS = 45.0
+CHUNK_SILENCE_THRESHOLD = 0.015
+CHUNK_SILENCE_MIN_SECONDS = 0.35
 
 
 def parse_args():
@@ -79,6 +91,8 @@ def parse_args():
 _last_activity_time = time.time()
 _is_sleeping = False
 _is_model_loaded = False
+_chunked_decode_state = None
+_chunked_decode_thread = None
 
 # Inactivity timeouts (seconds)
 AUTO_SLEEP_TIMEOUT = 15
@@ -126,12 +140,205 @@ def on_triple_ctrl():
         history.open_history_popup_async()
 
 
+def _make_chunked_decode_state():
+    return {
+        "lock": threading.Lock(),
+        "transcript": "",
+        "committed_end": 0,
+        "inflight": False,
+    }
+
+
+def _merge_chunk_text(existing_text, new_text):
+    """Merge overlapping chunk transcripts using suffix/prefix word overlap."""
+    existing_text = (existing_text or "").strip()
+    new_text = (new_text or "").strip()
+
+    if not existing_text:
+        return new_text
+    if not new_text:
+        return existing_text
+
+    existing_words = re.findall(r"\S+", existing_text)
+    new_word_matches = list(re.finditer(r"\S+", new_text))
+    new_words = [match.group(0) for match in new_word_matches]
+    max_overlap = min(len(existing_words), len(new_words), 40)
+
+    for overlap in range(max_overlap, 0, -1):
+        existing_slice = " ".join(existing_words[-overlap:]).lower()
+        new_slice = " ".join(new_words[:overlap]).lower()
+        if existing_slice == new_slice:
+            if overlap >= len(new_word_matches):
+                return existing_text
+
+            remaining_text = new_text[new_word_matches[overlap].start():]
+            separator = ""
+            if existing_text and remaining_text:
+                if not existing_text[-1].isspace() and not remaining_text[0].isspace():
+                    separator = " "
+            return f"{existing_text}{separator}{remaining_text}".strip()
+
+    if existing_text.lower().endswith(new_text.lower()):
+        return existing_text
+
+    separator = " "
+    if existing_text and new_text:
+        if existing_text.endswith("\n") or new_text.startswith("\n"):
+            separator = ""
+        elif existing_text.endswith((".", "!", "?")) and new_text.startswith("\n\n"):
+            separator = ""
+
+    return f"{existing_text}{separator}{new_text}".strip()
+
+
+def _find_silence_chunk_boundary(audio_16k, committed_end):
+    """Pick the latest safe silence boundary before the live tail."""
+    tail_samples = int(CHUNK_TAIL_SECONDS * 16000)
+    min_commit_samples = int(CHUNK_MIN_COMMIT_SECONDS * 16000)
+    max_window_samples = int(CHUNK_MAX_WINDOW_SECONDS * 16000)
+    silence_samples = int(CHUNK_SILENCE_MIN_SECONDS * 16000)
+
+    available_end = len(audio_16k) - tail_samples
+    if available_end - committed_end < min_commit_samples:
+        return None
+
+    search_start = committed_end + min_commit_samples
+    region = np.abs(audio_16k[search_start:available_end]) <= CHUNK_SILENCE_THRESHOLD
+    if region.size >= silence_samples:
+        padded = np.concatenate((np.array([0], dtype=np.int8), region.astype(np.int8), np.array([0], dtype=np.int8)))
+        transitions = np.diff(padded)
+        starts = np.where(transitions == 1)[0]
+        ends = np.where(transitions == -1)[0]
+        valid = np.where((ends - starts) >= silence_samples)[0]
+        if valid.size:
+            return search_start + int(starts[valid[-1]])
+
+    if available_end - committed_end >= max_window_samples:
+        return available_end
+
+    return None
+
+
+def chunked_decode_worker(session_state):
+    """Background chunk transcription during recording."""
+    log("Chunked preemptive decoding worker started", "debug")
+    overlap_samples = int(CHUNK_OVERLAP_SECONDS * 16000)
+
+    while _is_recording:
+        time.sleep(CHUNK_CHECK_INTERVAL)
+
+        if not _is_model_loaded:
+            continue
+
+        with session_state["lock"]:
+            if session_state["inflight"]:
+                continue
+            committed_end = session_state["committed_end"]
+            session_state["inflight"] = True
+
+        try:
+            audio_data = audio.get_current_buffer()
+            if audio_data is None:
+                continue
+
+            audio_16k = audio.prepare_for_transcription(audio_data)
+            boundary = _find_silence_chunk_boundary(audio_16k, committed_end)
+            if boundary is None:
+                continue
+
+            chunk_start = max(committed_end - overlap_samples, 0)
+            chunk_audio = audio_16k[chunk_start:boundary]
+            if len(chunk_audio) < 16000:
+                continue
+
+            log(
+                "Chunked preemptive decoding: transcribing "
+                f"{chunk_start / 16000.0:.1f}s -> {boundary / 16000.0:.1f}s",
+                "debug",
+            )
+
+            text = transcription.transcribe(chunk_audio)
+            if not text:
+                with session_state["lock"]:
+                    session_state["committed_end"] = boundary
+                log("Chunked preemptive decoding: chunk produced no text", "debug")
+                continue
+
+            with session_state["lock"]:
+                session_state["transcript"] = _merge_chunk_text(
+                    session_state["transcript"], text
+                )
+                session_state["committed_end"] = boundary
+                log(
+                    "Chunked preemptive decoding committed "
+                    f"{boundary / 16000.0:.1f}s of audio.",
+                )
+        except Exception as e:
+            log(f"Chunked preemptive decoding error: {e}", "debug")
+        finally:
+            with session_state["lock"]:
+                session_state["inflight"] = False
+
+    log("Chunked preemptive decoding worker stopped", "debug")
+
+
+def _collect_chunked_decode_result(audio_data):
+    """Capture the background-decoded prefix for final stitching."""
+    global _chunked_decode_state
+
+    if not config.chunked_ahead_decoding_enabled or _chunked_decode_state is None:
+        _chunked_decode_state = None
+        return None
+
+    with _chunked_decode_state["lock"]:
+        prefetched = {
+            "transcript": _chunked_decode_state["transcript"],
+            "committed_end": _chunked_decode_state["committed_end"],
+        }
+
+    _chunked_decode_state = None
+
+    if not prefetched["transcript"] or prefetched["committed_end"] <= 0:
+        return None
+
+    total_samples_16k = len(audio.prepare_for_transcription(audio_data))
+    if prefetched["committed_end"] >= total_samples_16k:
+        prefetched["committed_end"] = max(total_samples_16k - 1, 0)
+
+    log(
+        "Chunked preemptive decoding prepared "
+        f"{prefetched['committed_end'] / 16000.0:.1f}s ahead of stop"
+    )
+
+    return prefetched
+
+
+def _transcribe_final_audio(audio_16k, prefetched=None):
+    """Transcribe full audio or stitch in background-decoded chunks."""
+    if not prefetched:
+        return transcription.transcribe(audio_16k)
+
+    overlap_samples = int(CHUNK_OVERLAP_SECONDS * 16000)
+    tail_start = max(prefetched["committed_end"] - overlap_samples, 0)
+    tail_audio = audio_16k[tail_start:]
+    log(
+        "Chunked preemptive decoding: finishing tail from "
+        f"{tail_start / 16000.0:.1f}s to {len(audio_16k) / 16000.0:.1f}s",
+        "debug",
+    )
+    tail_text = transcription.transcribe(tail_audio) if len(tail_audio) >= 1600 else ""
+    merged_text = _merge_chunk_text(prefetched["transcript"], tail_text)
+    log("Chunked preemptive decoding: stitched prefetched chunks with final tail", "debug")
+    return merged_text.strip()
+
+
 def start_recording():
     """Start voice recording."""
-    global _is_recording, _live_preview_thread
+    global _is_recording, _live_preview_thread, _chunked_decode_state, _chunked_decode_thread
     _is_recording = True
 
     audio.start_recording()
+    _chunked_decode_state = None
 
     # Do notifications in background
     def _notify():
@@ -144,6 +351,15 @@ def start_recording():
     # Start live preview loop
     _live_preview_thread = threading.Thread(target=live_preview_worker, daemon=True)
     _live_preview_thread.start()
+
+    if config.chunked_ahead_decoding_enabled:
+        _chunked_decode_state = _make_chunked_decode_state()
+        _chunked_decode_thread = threading.Thread(
+            target=chunked_decode_worker,
+            args=(_chunked_decode_state,),
+            daemon=True,
+        )
+        _chunked_decode_thread.start()
 
 
 def stop_and_process():
@@ -169,7 +385,12 @@ def stop_and_process():
     play_sound("success")
 
     tray.update_tray("processing")
-    processing_queue.put(audio_data)
+    processing_queue.put(
+        {
+            "audio_data": audio_data,
+            "prefetched": _collect_chunked_decode_result(audio_data),
+        }
+    )
 
 
 def live_preview_worker():
@@ -214,7 +435,13 @@ def audio_processing_loop():
     """
     while True:
         # Wait for audio data
-        audio_data = processing_queue.get()
+        work_item = processing_queue.get()
+        if isinstance(work_item, dict):
+            audio_data = work_item["audio_data"]
+            prefetched = work_item.get("prefetched")
+        else:
+            audio_data = work_item
+            prefetched = None
 
         # Optional debug playback
         if args and args.playback:
@@ -240,11 +467,7 @@ def audio_processing_loop():
 
         try:
             # Transcribe
-            text = transcription.transcribe(
-                audio_16k,
-                language=config.language,
-                task=config.task,
-            )
+            text = _transcribe_final_audio(audio_16k, prefetched=prefetched)
 
             if text:
                 log(f"Raw transcription: '{text}'")

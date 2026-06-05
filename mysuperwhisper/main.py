@@ -130,6 +130,7 @@ def lazy_load_model():
     log("Background model loading started...")
     transcription.load_model()
     _is_model_loaded = True
+    tray.refresh_menu()
     log("Background model loading complete.")
 
 
@@ -520,6 +521,14 @@ def save_config():
     config.save()
 
 
+def unload_model_on_demand():
+    """Unload the model from the tray and keep main state in sync."""
+    global _is_model_loaded
+    unloaded = transcription.unload_model()
+    _is_model_loaded = False
+    return unloaded
+
+
 def sleep_monitor_worker():
     """Monitor for inactivity and put app to sleep."""
     global _is_sleeping, _is_model_loaded
@@ -546,6 +555,7 @@ def sleep_monitor_worker():
                 log(f"Unloading model due to inactivity ({mins}m)...")
                 transcription.unload_model()
                 _is_model_loaded = False
+                tray.refresh_menu()
                 tray.update_tray("sleeping")
 
 
@@ -702,7 +712,11 @@ def main():
     history.load_history()
 
     # Setup tray callbacks
-    tray.set_callbacks(on_quit=on_quit, save_config=save_config)
+    tray.set_callbacks(
+        on_quit=on_quit,
+        save_config=save_config,
+        unload_model=unload_model_on_demand,
+    )
 
     # Create tray icon
     tray.create_tray_icon()

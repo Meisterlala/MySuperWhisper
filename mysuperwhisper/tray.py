@@ -19,13 +19,15 @@ _tray_icon = None
 # Callbacks (set by main module)
 _on_quit_callback = None
 _save_config_callback = None
+_unload_model_callback = None
 
 
-def set_callbacks(on_quit, save_config):
+def set_callbacks(on_quit, save_config, unload_model=None):
     """Set callback functions for tray actions."""
-    global _on_quit_callback, _save_config_callback
+    global _on_quit_callback, _save_config_callback, _unload_model_callback
     _on_quit_callback = on_quit
     _save_config_callback = save_config
+    _unload_model_callback = unload_model
 
 
 def _create_image(width, height, color, level=0.0):
@@ -150,6 +152,17 @@ def update_tray(status, level=0.0):
         _tray_icon.title = prefix + detail
     except Exception:
         pass  # Avoid crashes if icon is being closed
+
+
+def refresh_menu():
+    """Refresh tray menu items that depend on runtime state."""
+    if _tray_icon is None:
+        return
+
+    try:
+        _tray_icon.menu = _create_menu()
+    except Exception as e:
+        log(f"Menu refresh error: {e}", "error")
 
 
 def _open_file_with_default_app(filepath):
@@ -292,6 +305,22 @@ def _on_reload_models(icon, item):
         update_tray("idle")
 
     threading.Thread(target=_reload, daemon=True).start()
+
+
+def _on_unload_model(icon, item):
+    """Unload Granite speech models on demand."""
+    def _unload():
+        if _unload_model_callback:
+            unloaded = _unload_model_callback()
+        else:
+            unloaded = transcription.unload_model()
+
+        if unloaded:
+            log("Model unloaded on demand.")
+        refresh_menu()
+        update_tray("sleeping")
+
+    threading.Thread(target=_unload, daemon=True).start()
 
 
 def _on_select_language(lang_code):
@@ -668,7 +697,14 @@ def _create_menu():
         pystray.MenuItem("Open logs folder", _on_open_log_folder)
     )
 
-    menu = pystray.Menu(
+    menu_items = []
+    if transcription.is_model_loaded():
+        menu_items.extend([
+            pystray.MenuItem("Unload Model", _on_unload_model),
+            pystray.Menu.SEPARATOR,
+        ])
+
+    menu_items.extend([
         pystray.MenuItem(
             "System notifications",
             _on_toggle_system_notifications,
@@ -725,7 +761,9 @@ def _create_menu():
         pystray.MenuItem("Files", files_menu),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", _on_quit)
-    )
+    ])
+
+    menu = pystray.Menu(*menu_items)
 
     return menu
 

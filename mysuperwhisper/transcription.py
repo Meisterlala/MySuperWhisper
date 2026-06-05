@@ -20,7 +20,7 @@ _preview_processor: Any = None
 _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
-_model_lock = threading.Lock()
+_model_lock = threading.RLock()
 
 
 def _ensure_dependencies():
@@ -56,6 +56,36 @@ def _build_prompt():
     )
 
 
+def _flush_cuda_cache():
+    if _torch is None or not _torch.cuda.is_available():
+        return
+
+    _torch.cuda.empty_cache()
+    try:
+        _torch.cuda.ipc_collect()
+    except RuntimeError as exc:
+        log(f"CUDA IPC cleanup skipped: {exc}", "debug")
+
+
+def _load_model_with_low_cpu_memory(model_class, model_name, device, **kwargs):
+    """Load with reduced CPU peak memory, then move to the selected device."""
+    model = None
+    try:
+        model = model_class.from_pretrained(
+            model_name,
+            low_cpu_mem_usage=True,
+            **kwargs,
+        )
+        model.to(device)
+        return model
+    except Exception:
+        if model is not None:
+            del model
+        gc.collect()
+        _flush_cuda_cache()
+        raise
+
+
 def _estimate_max_new_tokens(audio_data, input_token_count):
     """Estimate a safe generation budget from the audio duration."""
     audio_seconds = max(len(audio_data) / 16000.0, 0.0)
@@ -88,11 +118,12 @@ def _load_main_model(model_name):
     log(f"Loading Granite transcription model '{model_name}' on {device}...")
 
     processor = _transformers.AutoProcessor.from_pretrained(model_name)
-    model = _transformers.AutoModelForSpeechSeq2Seq.from_pretrained(
+    model = _load_model_with_low_cpu_memory(
+        _transformers.AutoModelForSpeechSeq2Seq,
         model_name,
+        device,
         torch_dtype=dtype,
     )
-    model.to(device)
     model.eval()
 
     _main_processor = processor
@@ -126,13 +157,14 @@ def _load_preview_model(model_name):
             model_name,
             trust_remote_code=True,
         )
-        model = _transformers.AutoModel.from_pretrained(
+        model = _load_model_with_low_cpu_memory(
+            _transformers.AutoModel,
             model_name,
+            "cuda",
             trust_remote_code=True,
             attn_implementation="flash_attention_2",
             torch_dtype=_torch.bfloat16,
         )
-        model.to("cuda")
         model.eval()
         _preview_processor = processor
         _preview_model = model
@@ -153,12 +185,16 @@ def load_model(model_name=None):
     Returns:
         bool: True if GPU mode, False if CPU mode
     """
-    _ensure_dependencies()
+    with _model_lock:
+        _ensure_dependencies()
 
-    selected_model = model_name or config.transcription_model
-    _load_main_model(selected_model)
-    _load_preview_model(config.preview_model)
-    return not _is_cpu_mode
+        if _main_model is not None:
+            return not _is_cpu_mode
+
+        selected_model = model_name or config.transcription_model
+        _load_main_model(selected_model)
+        _load_preview_model(config.preview_model)
+        return not _is_cpu_mode
 
 
 def reload_model(new_model_name=None, preview_model_name=None):
@@ -174,59 +210,63 @@ def reload_model(new_model_name=None, preview_model_name=None):
     """
     global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
 
-    _ensure_dependencies()
+    with _model_lock:
+        _ensure_dependencies()
 
-    target_main_model = new_model_name or config.transcription_model
-    target_preview_model = preview_model_name or config.preview_model
-    log(
-        f"Reloading Granite models: main='{target_main_model}', preview='{target_preview_model}'..."
-    )
+        target_main_model = new_model_name or config.transcription_model
+        target_preview_model = preview_model_name or config.preview_model
+        log(
+            f"Reloading Granite models: main='{target_main_model}', preview='{target_preview_model}'..."
+        )
 
-    try:
-        unload_model()
-        _load_main_model(target_main_model)
-        _load_preview_model(target_preview_model)
-        config.transcription_model = target_main_model
-        config.preview_model = target_preview_model
-        return True
+        try:
+            unload_model()
+            _load_main_model(target_main_model)
+            _load_preview_model(target_preview_model)
+            config.transcription_model = target_main_model
+            config.preview_model = target_preview_model
+            return True
 
-    except Exception as exc:
-        log(f"Error reloading Granite models: {exc}", "error")
-        _main_model = None
-        _main_processor = None
-        _main_tokenizer = None
-        _preview_model = None
-        _preview_processor = None
-        return False
+        except Exception as exc:
+            log(f"Error reloading Granite models: {exc}", "error")
+            _main_model = None
+            _main_processor = None
+            _main_tokenizer = None
+            _preview_model = None
+            _preview_processor = None
+            return False
 
 
 def unload_model():
     """Unload Granite speech models to free memory/VRAM."""
     global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor, _is_cpu_mode
 
-    unloaded = False
+    with _model_lock:
+        unloaded = False
 
-    if _main_model or _preview_model:
-        log("Unloading model to free resources...")
+        if _main_model or _preview_model:
+            log("Unloading model to free resources...")
 
-    if _main_model:
-        del _main_model
-        _main_model = None
-        unloaded = True
+        if _main_model:
+            del _main_model
+            _main_model = None
+            unloaded = True
 
-    if _preview_model:
-        del _preview_model
-        _preview_model = None
-        unloaded = True
+        if _preview_model:
+            del _preview_model
+            _preview_model = None
+            unloaded = True
 
-    _main_processor = None
-    _main_tokenizer = None
-    _preview_processor = None
-    _is_cpu_mode = False
+        _main_processor = None
+        _main_tokenizer = None
+        _preview_processor = None
+        _is_cpu_mode = False
 
-    if unloaded:
         gc.collect()
-    return unloaded
+        _flush_cuda_cache()
+        if unloaded:
+            log("CUDA model cache released.")
+        return unloaded
 
 
 def _transcribe_with_main_model(audio_data):
@@ -298,9 +338,10 @@ def transcribe(audio_data, language=None, fast=False):
         log(f"Transcribing with configured voice-command language '{lang}'.", "debug")
 
     try:
-        if fast and _preview_model is not None:
-            return _transcribe_with_preview_model(audio_data)
-        return _transcribe_with_main_model(audio_data)
+        with _model_lock:
+            if fast and _preview_model is not None:
+                return _transcribe_with_preview_model(audio_data)
+            return _transcribe_with_main_model(audio_data)
 
     except Exception as exc:
         log(f"Transcription error: {exc}", "error")

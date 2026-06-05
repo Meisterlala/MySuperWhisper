@@ -317,6 +317,8 @@ def _on_unload_model(icon, item):
 
         if unloaded:
             log("Model unloaded on demand.")
+        else:
+            log("Unload requested; no loaded model was tracked, CUDA cache was flushed.")
         refresh_menu()
         update_tray("sleeping")
 

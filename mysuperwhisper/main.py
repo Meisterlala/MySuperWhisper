@@ -91,6 +91,8 @@ def parse_args():
 _last_activity_time = time.time()
 _is_sleeping = False
 _is_model_loaded = False
+_is_model_loading = False
+_model_load_error = None
 _chunked_decode_state = None
 _chunked_decode_thread = None
 
@@ -118,7 +120,7 @@ def on_double_ctrl():
         stop_and_process()
     else:
         # If model is not loaded, start loading it in background while recording
-        if not _is_model_loaded:
+        if not _is_model_loaded and not _is_model_loading:
             log("Starting record while loading model...")
             threading.Thread(target=lazy_load_model, daemon=True).start()
         start_recording()
@@ -126,12 +128,27 @@ def on_double_ctrl():
 
 def lazy_load_model():
     """Load model in background without blocking recording."""
-    global _is_model_loaded
+    global _is_model_loaded, _is_model_loading, _model_load_error
+    if _is_model_loaded or _is_model_loading:
+        return
+
+    _is_model_loading = True
+    _model_load_error = None
     log("Background model loading started...")
-    transcription.load_model()
-    _is_model_loaded = True
-    tray.refresh_menu()
-    log("Background model loading complete.")
+    try:
+        transcription.load_model()
+        _is_model_loaded = True
+        tray.refresh_menu()
+        log("Background model loading complete.")
+    except Exception as exc:
+        _is_model_loaded = False
+        _model_load_error = exc
+        transcription.unload_model()
+        tray.refresh_menu()
+        tray.update_tray("sleeping")
+        log(f"Background model loading failed: {exc}", "error")
+    finally:
+        _is_model_loading = False
 
 
 def on_triple_ctrl():
@@ -460,8 +477,14 @@ def audio_processing_loop():
         # Wait for model to be loaded if it's still loading
         if not _is_model_loaded:
             log("Waiting for model to load before transcribing...", "debug")
-            while not _is_model_loaded:
+            while _is_model_loading and not _model_load_error:
                 time.sleep(0.05)
+            if not _is_model_loaded:
+                if _model_load_error:
+                    log(f"Skipping transcription because model failed to load: {_model_load_error}", "error")
+                else:
+                    log("Skipping transcription because model is not loaded.", "error")
+                continue
 
         # Prepare audio for Granite speech transcription (downsample to 16kHz)
         audio_16k = audio.prepare_for_transcription(audio_data)
@@ -523,15 +546,17 @@ def save_config():
 
 def unload_model_on_demand():
     """Unload the model from the tray and keep main state in sync."""
-    global _is_model_loaded
+    global _is_model_loaded, _is_model_loading, _model_load_error
     unloaded = transcription.unload_model()
     _is_model_loaded = False
+    _is_model_loading = False
+    _model_load_error = None
     return unloaded
 
 
 def sleep_monitor_worker():
     """Monitor for inactivity and put app to sleep."""
-    global _is_sleeping, _is_model_loaded
+    global _is_sleeping, _is_model_loaded, _is_model_loading, _model_load_error
     while True:
         time.sleep(10)
         now = time.time()
@@ -555,6 +580,8 @@ def sleep_monitor_worker():
                 log(f"Unloading model due to inactivity ({mins}m)...")
                 transcription.unload_model()
                 _is_model_loaded = False
+                _is_model_loading = False
+                _model_load_error = None
                 tray.refresh_menu()
                 tray.update_tray("sleeping")
 

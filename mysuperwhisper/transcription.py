@@ -21,6 +21,9 @@ _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
 _model_lock = threading.RLock()
+_preview_load_thread = None
+_preview_load_generation = None
+_model_generation = 0
 
 
 def _ensure_dependencies():
@@ -43,7 +46,8 @@ def _ensure_dependencies():
 
 def _get_device_and_dtype():
     if _torch.cuda.is_available():
-        return "cuda", _torch.bfloat16, False
+        dtype = _torch.bfloat16 if _torch.cuda.is_bf16_supported() else _torch.float16
+        return "cuda", dtype, False
     return "cpu", _torch.float32, True
 
 
@@ -137,18 +141,11 @@ def _load_main_model(model_name):
         log("Granite transcription model loaded on GPU.")
 
 
-def _load_preview_model(model_name):
+def _load_preview_model(model_name, generation):
     global _preview_model, _preview_processor
-
-    _preview_model = None
-    _preview_processor = None
 
     if not _torch.cuda.is_available():
         log("Live preview model disabled because CUDA is unavailable.", "warning")
-        return
-
-    if importlib.util.find_spec("flash_attn") is None:
-        log("Live preview model disabled because flash-attn is not installed.", "warning")
         return
 
     try:
@@ -157,22 +154,59 @@ def _load_preview_model(model_name):
             model_name,
             trust_remote_code=True,
         )
+        model_kwargs = {
+            "trust_remote_code": True,
+            "torch_dtype": _get_device_and_dtype()[1],
+        }
+        if importlib.util.find_spec("flash_attn") is not None:
+            model_kwargs["attn_implementation"] = "flash_attention_2"
+        else:
+            log("flash-attn is unavailable; loading Granite preview with standard attention.")
         model = _load_model_with_low_cpu_memory(
             _transformers.AutoModel,
             model_name,
             "cuda",
-            trust_remote_code=True,
-            attn_implementation="flash_attention_2",
-            torch_dtype=_torch.bfloat16,
+            **model_kwargs,
         )
         model.eval()
+        if generation != _model_generation:
+            del model
+            gc.collect()
+            _flush_cuda_cache()
+            log("Discarded stale Granite preview model load.", "debug")
+            return
         _preview_processor = processor
         _preview_model = model
         log("Granite preview model loaded on GPU.")
     except Exception as exc:
-        _preview_model = None
-        _preview_processor = None
+        if generation == _model_generation:
+            _preview_model = None
+            _preview_processor = None
         log(f"Preview model unavailable: {exc}", "warning")
+
+
+def _start_preview_model_load(model_name):
+    """Load the optional preview model without blocking final transcription."""
+    global _preview_load_thread, _preview_load_generation
+
+    if not config.live_preview_enabled:
+        return
+    if (
+        _preview_load_thread
+        and _preview_load_thread.is_alive()
+        and _preview_load_generation == _model_generation
+    ):
+        return
+
+    generation = _model_generation
+    _preview_load_thread = threading.Thread(
+        target=_load_preview_model,
+        args=(model_name, generation),
+        name="granite-preview-loader",
+        daemon=True,
+    )
+    _preview_load_generation = generation
+    _preview_load_thread.start()
 
 
 def load_model(model_name=None):
@@ -193,7 +227,7 @@ def load_model(model_name=None):
 
         selected_model = model_name or config.transcription_model
         _load_main_model(selected_model)
-        _load_preview_model(config.preview_model)
+        _start_preview_model_load(config.preview_model)
         return not _is_cpu_mode
 
 
@@ -222,7 +256,7 @@ def reload_model(new_model_name=None, preview_model_name=None):
         try:
             unload_model()
             _load_main_model(target_main_model)
-            _load_preview_model(target_preview_model)
+            _start_preview_model_load(target_preview_model)
             config.transcription_model = target_main_model
             config.preview_model = target_preview_model
             return True
@@ -239,9 +273,11 @@ def reload_model(new_model_name=None, preview_model_name=None):
 
 def unload_model():
     """Unload Granite speech models to free memory/VRAM."""
-    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor, _is_cpu_mode
+    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
+    global _is_cpu_mode, _model_generation
 
     with _model_lock:
+        _model_generation += 1
         unloaded = False
 
         if _main_model or _preview_model:

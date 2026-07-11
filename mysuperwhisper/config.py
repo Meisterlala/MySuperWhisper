@@ -79,6 +79,7 @@ class Config:
         self.use_clipboard_to_paste = False
 
         # Hotkey configuration
+        self.keyboard_shortcuts_enabled = False
         self.record_hotkey = "ctrl_l"  # Key for recording: "ctrl_l", "alt_r", "ctrl_r", etc.
         self.record_press_count = 2  # Number of presses: 1=single, 2=double, 3=triple
         self.history_hotkey = "ctrl_l"  # Key for history popup
@@ -110,6 +111,7 @@ class Config:
                 self.use_clipboard_to_paste = data.get("use_clipboard_to_paste", False)
 
                 # Hotkey configuration
+                self.keyboard_shortcuts_enabled = data.get("keyboard_shortcuts_enabled", False)
                 self.record_hotkey = data.get("record_hotkey", "ctrl_l")
                 self.record_press_count = data.get("record_press_count", 2)
                 self.history_hotkey = data.get("history_hotkey", "ctrl_l")
@@ -123,7 +125,8 @@ class Config:
                 # Check if new fields are missing (for config migration)
                 if ("language" not in data or
                     "record_hotkey" not in data or "record_press_count" not in data or
-                    "use_clipboard_to_paste" not in data):
+                    "use_clipboard_to_paste" not in data or
+                    "keyboard_shortcuts_enabled" not in data):
                     log("Updating config file with new fields")
                     needs_save = True
             else:
@@ -153,6 +156,7 @@ class Config:
                 "input_device": self.input_device,
                 "output_device": self.output_device,
                 "use_clipboard_to_paste": self.use_clipboard_to_paste,
+                "keyboard_shortcuts_enabled": self.keyboard_shortcuts_enabled,
                 "record_hotkey": self.record_hotkey,
                 "record_press_count": self.record_press_count,
                 "history_hotkey": self.history_hotkey,

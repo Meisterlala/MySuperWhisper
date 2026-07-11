@@ -454,6 +454,8 @@ def _create_listener():
 def _restart_listener():
     """Stop the current listener and start a fresh one."""
     global _listener
+    if not _listener_should_run:
+        return
     try:
         if _listener:
             try:
@@ -469,6 +471,7 @@ def _restart_listener():
 
 def _listener_watchdog():
     """Monitor the keyboard listener and restart it if it dies."""
+    global _watchdog_running
     while _listener_should_run:
         time.sleep(5)
         if _listener_should_run and _listener and not _listener.is_alive():
@@ -476,15 +479,19 @@ def _listener_watchdog():
             _held_keys.clear()
             _held_keys_time.clear()
             _restart_listener()
+    _watchdog_running = False
 
 
 def start_listener():
     """Start the keyboard listener with auto-restart watchdog."""
     global _listener, _listener_should_run, _watchdog_running
 
+    if _listener_should_run and _listener and _listener.is_alive():
+        return _listener
+
+    _listener_should_run = True
     _listener = _create_listener()
     _listener.start()
-    _listener_should_run = True
 
     # Start watchdog thread (only once)
     if not _watchdog_running:
@@ -502,6 +509,9 @@ def stop_listener(listener=None):
     """Stop the keyboard listener and watchdog."""
     global _listener_should_run
     _listener_should_run = False
+    reset_hotkey_state()
+    _held_keys.clear()
+    _held_keys_time.clear()
     target = listener or _listener
     if target:
         target.stop()

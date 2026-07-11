@@ -599,18 +599,22 @@ def startup_worker():
     # Start audio stream (uses PulseAudio default source)
     audio.start_stream()
 
-    # Setup keyboard callbacks and start listener
+    # Setup optional global shortcuts. Remote-control signals work independently.
     keyboard.set_callbacks(
         on_record_hotkey=on_double_ctrl,
         on_history_hotkey=on_triple_ctrl,
         is_recording=audio.is_currently_recording
     )
-    keyboard.start_listener()
+    if config.keyboard_shortcuts_enabled:
+        keyboard.start_listener()
 
     # Log ready message with actual hotkey
     from .keyboard import _get_hotkey_description
     hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-    log(f"Ready! Press {hotkey_desc} to start/stop recording.")
+    if config.keyboard_shortcuts_enabled:
+        log(f"Ready! Press {hotkey_desc} to start/stop recording.")
+    else:
+        log("Ready! Global keyboard shortcuts are disabled; listening for remote control.")
     log("The icon has been added to the notification area (system tray).")
     log("Right-click the icon to change microphone or test audio level.")
 
@@ -667,14 +671,21 @@ def check_single_instance():
 
 def get_running_pid():
     """Get the PID of the running instance."""
+    import fcntl
+
     lock_file = "/tmp/mysuperwhisper.lock"
     if os.path.exists(lock_file):
         try:
-            with open(lock_file, "r") as f:
+            with open(lock_file, "r+") as f:
+                try:
+                    fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return None
+                except OSError:
+                    pass
                 content = f.read().strip()
                 if content:
                     return int(content)
-        except Exception:
+        except (OSError, ValueError):
             pass
     return None
 

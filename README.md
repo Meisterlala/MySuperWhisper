@@ -15,3 +15,11 @@ python remote_control.py --toggle
 python remote_control.py --start
 python remote_control.py --stop
 ```
+
+Global keyboard shortcuts are disabled by default, so the application only reacts to
+remote-control commands. They can be enabled at runtime from **Global keyboard shortcuts**
+in the tray menu; the choice is persisted in `~/.config/mysuperwhisper/config.json`.
+
+The Granite preview model uses Flash Attention when `flash-attn` is installed and falls
+back to standard attention otherwise. CUDA is required for live preview; final Granite
+transcription falls back to CPU when CUDA is unavailable.

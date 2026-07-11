@@ -119,9 +119,12 @@ def update_tray(status, level=0.0):
 
     if status == "idle":
         color = "green"
-        from .keyboard import _get_hotkey_description
-        hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-        detail = f"Ready ({hotkey_desc})"
+        if config.keyboard_shortcuts_enabled:
+            from .keyboard import _get_hotkey_description
+            hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+            detail = f"Ready ({hotkey_desc})"
+        else:
+            detail = "Ready (remote control)"
     elif status == "recording":
         color = "red"
         detail = "Recording..."
@@ -206,6 +209,25 @@ def _on_toggle_unload_model(icon, item):
         _save_config_callback()
     log(
         f"Unload model after inactivity: {'enabled' if config.unload_model_after_inactivity else 'disabled'}"
+    )
+
+
+def _on_toggle_keyboard_shortcuts(icon, item):
+    """Enable or disable global keyboard capture."""
+    from . import keyboard
+
+    config.keyboard_shortcuts_enabled = not config.keyboard_shortcuts_enabled
+    if config.keyboard_shortcuts_enabled:
+        keyboard.start_listener()
+    else:
+        keyboard.stop_listener()
+    if _save_config_callback:
+        _save_config_callback()
+    refresh_menu()
+    update_tray("idle")
+    log(
+        "Global keyboard shortcuts: "
+        f"{'enabled' if config.keyboard_shortcuts_enabled else 'disabled'}"
     )
 
 
@@ -418,9 +440,11 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
     result = {"key": current_key, "count": current_count, "confirmed": False}
 
     def run_popup():
+        shortcuts_were_enabled = config.keyboard_shortcuts_enabled
         # Stop pynput listener to avoid X11 conflicts
-        stop_listener()
-        log("Pynput listener stopped for shortcut popup")
+        if shortcuts_were_enabled:
+            stop_listener()
+            log("Pynput listener stopped for shortcut popup")
 
         root = tk.Tk()
         root.title(title)
@@ -541,9 +565,9 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
         root.protocol("WM_DELETE_WINDOW", on_cancel)
         root.mainloop()
 
-        # Restart pynput listener
-        start_listener()
-        log("Pynput listener restarted after shortcut popup")
+        if shortcuts_were_enabled and config.keyboard_shortcuts_enabled:
+            start_listener()
+            log("Pynput listener restarted after shortcut popup")
 
         # Apply if confirmed
         if result["confirmed"]:
@@ -743,6 +767,11 @@ def _create_menu():
             checked=lambda item: config.unload_model_after_inactivity
         ),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem(
+            "Global keyboard shortcuts",
+            _on_toggle_keyboard_shortcuts,
+            checked=lambda item: config.keyboard_shortcuts_enabled,
+        ),
         pystray.MenuItem("⌨️ Keyboard Shortcuts", hotkeys_menu),
         pystray.MenuItem("History", _on_show_history),
         pystray.Menu.SEPARATOR,

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mysuperwhisper"
 version = "1.6.1"
-description = "Global Voice Dictation for Linux using Whisper AI"
+description = "Global voice dictation for Linux using IBM Granite Speech"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -36,9 +36,14 @@ classifiers = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-    "faster-whisper>=0.9.0",
+    "torch",
+    "torchaudio",
+    "transformers>=5.5.3",
+    "accelerate",
+    "huggingface-hub",
+    "soundfile",
     "sounddevice>=0.4.6",
-    "numpy>=1.21.0",
+    "numpy>=2.0,<2.8",
     "pyperclip>=1.8.2",
     "pynput>=1.7.6",
     "pystray>=0.19.4",

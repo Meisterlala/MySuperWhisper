@@ -5,7 +5,7 @@ accelerate
 huggingface-hub
 soundfile
 sounddevice
-numpy<2.0
+numpy>=2.0,<2.8
 pynput
 pystray
 Pillow>=12.1.1

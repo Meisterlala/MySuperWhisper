@@ -2,17 +2,22 @@
 import os
 import sys
 import signal
-from pathlib import Path
+import fcntl
 
 def get_running_pid():
     lock_file = "/tmp/mysuperwhisper.lock"
     if os.path.exists(lock_file):
         try:
-            with open(lock_file, 'r') as f:
+            with open(lock_file, 'r+') as f:
+                try:
+                    fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return None
+                except OSError:
+                    pass
                 content = f.read().strip()
                 if content:
                     return int(content)
-        except:
+        except (OSError, ValueError):
             pass
     return None
 

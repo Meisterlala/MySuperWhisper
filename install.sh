@@ -18,7 +18,6 @@ PROJECT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 DESKTOP_TEMPLATE="$PROJECT_DIR/mysuperwhisper.desktop"
 AUTOSTART_DIR="$HOME/.config/autostart"
 APPLICATIONS_DIR="$HOME/.local/share/applications"
-DEST_FILE_AUTOSTART="$AUTOSTART_DIR/mysuperwhisper.desktop"
 DEST_FILE_APP="$APPLICATIONS_DIR/mysuperwhisper.desktop"
 VENV_DIR="$PROJECT_DIR/venv"
 
@@ -202,11 +201,6 @@ echo -e "${GREEN}[6/6]${NC} Configuration du lancement automatique..."
 
 PYTHON_EXEC="$VENV_DIR/bin/python"
 
-# Création du dossier Autostart si inexistant
-if [ ! -d "$AUTOSTART_DIR" ]; then
-    mkdir -p "$AUTOSTART_DIR"
-fi
-
 # Création du dossier Applications si inexistant
 if [ ! -d "$APPLICATIONS_DIR" ]; then
     mkdir -p "$APPLICATIONS_DIR"
@@ -214,18 +208,13 @@ fi
 
 # Génération des fichiers .desktop
 if [ -f "$DESKTOP_TEMPLATE" ]; then
-    sed -e "s|__PYTHON_EXEC__|$PYTHON_EXEC|g" \
-        -e "s|__SCRIPT_PATH__|-m mysuperwhisper|g" \
-        -e "s|__WORK_DIR__|$PROJECT_DIR/|g" \
-        -e "s|__ICON_PATH__|$PROJECT_DIR/mysuperwhisper.svg|g" \
-        "$DESKTOP_TEMPLATE" > "$DEST_FILE_AUTOSTART"
+    sed -e "s|__ICON_PATH__|$PROJECT_DIR/mysuperwhisper.svg|g" \
+        "$DESKTOP_TEMPLATE" > "$DEST_FILE_APP"
 
-    cp "$DEST_FILE_AUTOSTART" "$DEST_FILE_APP"
-    chmod +x "$DEST_FILE_AUTOSTART"
     chmod +x "$DEST_FILE_APP"
+    rm -f "$AUTOSTART_DIR/mysuperwhisper.desktop"
 
-    echo "   Fichiers .desktop créés :"
-    echo "   - $DEST_FILE_AUTOSTART"
+    echo "   Lanceur de service créé :"
     echo "   - $DEST_FILE_APP"
 else
     echo -e "${YELLOW}   Template .desktop non trouvé, étape ignorée.${NC}"

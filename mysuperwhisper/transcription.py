@@ -20,6 +20,7 @@ _preview_processor: Any = None
 _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
+_main_device = None
 _model_lock = threading.RLock()
 _preview_load_thread = None
 _preview_load_generation = None
@@ -44,11 +45,11 @@ def _ensure_dependencies():
     _transformers = transformers
 
 
-def _get_device_and_dtype():
-    if _torch.cuda.is_available():
+def _get_device_and_dtype(force_cpu=False):
+    if not force_cpu and _torch.cuda.is_available():
         dtype = _torch.bfloat16 if _torch.cuda.is_bf16_supported() else _torch.float16
         return "cuda", dtype, False
-    return "cpu", _torch.float32, True
+    return "cpu", _torch.bfloat16, True
 
 
 def _build_prompt():
@@ -115,10 +116,10 @@ def _estimate_max_new_tokens(audio_data, input_token_count):
     return estimated_output_tokens
 
 
-def _load_main_model(model_name):
-    global _main_model, _main_processor, _main_tokenizer, _is_cpu_mode
+def _load_main_model(model_name, force_cpu=False):
+    global _main_model, _main_processor, _main_tokenizer, _is_cpu_mode, _main_device
 
-    device, dtype, cpu_mode = _get_device_and_dtype()
+    device, dtype, cpu_mode = _get_device_and_dtype(force_cpu=force_cpu)
     log(f"Loading Granite transcription model '{model_name}' on {device}...")
 
     processor = _transformers.AutoProcessor.from_pretrained(model_name)
@@ -134,11 +135,34 @@ def _load_main_model(model_name):
     _main_tokenizer = processor.tokenizer
     _main_model = model
     _is_cpu_mode = cpu_mode
+    _main_device = device
 
     if cpu_mode:
-        log("Granite transcription model loaded on CPU (degraded mode).", "warning")
+        log("Granite transcription model loaded on CPU in BF16 mode.", "warning")
     else:
         log("Granite transcription model loaded on GPU.")
+
+
+def _load_main_model_with_cpu_fallback(model_name):
+    """Load on CUDA when possible, falling back to system RAM after GPU OOM."""
+    gpu_oom = False
+    try:
+        _load_main_model(model_name)
+    except Exception as exc:
+        if not is_out_of_vram_error(exc):
+            raise
+        gpu_oom = True
+
+    # Leave the exception scope before cleanup. Its traceback can retain references
+    # to partially loaded CUDA tensors until the exception variable is released.
+    if gpu_oom:
+        gc.collect()
+        _flush_cuda_cache()
+        log(
+            "GPU memory is insufficient; loading the transcription model in system RAM.",
+            "warning",
+        )
+        _load_main_model(model_name, force_cpu=True)
 
 
 def _load_preview_model(model_name, generation):
@@ -189,7 +213,7 @@ def _start_preview_model_load(model_name):
     """Load the optional preview model without blocking final transcription."""
     global _preview_load_thread, _preview_load_generation
 
-    if not config.live_preview_enabled:
+    if not config.live_preview_enabled or _is_cpu_mode:
         return
     if (
         _preview_load_thread
@@ -226,7 +250,7 @@ def load_model(model_name=None):
             return not _is_cpu_mode
 
         selected_model = model_name or config.transcription_model
-        _load_main_model(selected_model)
+        _load_main_model_with_cpu_fallback(selected_model)
         _start_preview_model_load(config.preview_model)
         return not _is_cpu_mode
 
@@ -255,7 +279,7 @@ def reload_model(new_model_name=None, preview_model_name=None):
 
         try:
             unload_model()
-            _load_main_model(target_main_model)
+            _load_main_model_with_cpu_fallback(target_main_model)
             _start_preview_model_load(target_preview_model)
             config.transcription_model = target_main_model
             config.preview_model = target_preview_model
@@ -274,7 +298,7 @@ def reload_model(new_model_name=None, preview_model_name=None):
 def unload_model():
     """Unload Granite speech models to free memory/VRAM."""
     global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
-    global _is_cpu_mode, _model_generation
+    global _is_cpu_mode, _main_device, _model_generation
 
     with _model_lock:
         _model_generation += 1
@@ -297,6 +321,7 @@ def unload_model():
         _main_tokenizer = None
         _preview_processor = None
         _is_cpu_mode = False
+        _main_device = None
 
         gc.collect()
         _flush_cuda_cache()
@@ -306,7 +331,7 @@ def unload_model():
 
 
 def _transcribe_with_main_model(audio_data):
-    device, _, _ = _get_device_and_dtype()
+    device = _main_device or _get_device_and_dtype()[0]
     prompt = _build_prompt()
     chat = [{"role": "user", "content": prompt}]
     prompt_text = _main_tokenizer.apply_chat_template(
@@ -380,8 +405,23 @@ def transcribe(audio_data, language=None, fast=False):
             return _transcribe_with_main_model(audio_data)
 
     except Exception as exc:
-        log(f"Transcription error: {exc}", "error")
-        raise
+        retry_on_cpu = is_out_of_vram_error(exc) and not _is_cpu_mode and not fast
+        if not retry_on_cpu:
+            log(f"Transcription error: {exc}", "error")
+            raise
+
+    # Retry outside the exception scope so its traceback cannot keep the failed
+    # generation's CUDA tensors alive during cleanup and CPU model loading.
+    log(
+        "GPU ran out of memory during transcription; retrying on CPU using system RAM.",
+        "warning",
+    )
+    with _model_lock:
+        unload_model()
+        gc.collect()
+        _flush_cuda_cache()
+        _load_main_model(config.transcription_model, force_cpu=True)
+        return _transcribe_with_main_model(audio_data)
 
 
 def is_out_of_vram_error(exc):

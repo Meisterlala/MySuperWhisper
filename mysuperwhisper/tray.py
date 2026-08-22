@@ -92,13 +92,14 @@ def _create_image(width, height, color, level=0.0):
     return image
 
 
-def update_tray(status, level=0.0):
+def update_tray(status, level=0.0, error_message=None):
     """
     Update tray icon and tooltip based on status.
 
     Args:
-        status: One of 'idle', 'recording', 'processing', 'testing', 'loading'
+        status: One of 'idle', 'recording', 'processing', 'testing', 'loading', 'error'
         level: Audio level for test mode (0.0-1.0)
+        error_message: Optional short detail shown for an error status
     """
     if _tray_icon is None:
         return
@@ -107,10 +108,16 @@ def update_tray(status, level=0.0):
     # which can be slow on some environments (Wayland/XWayland)
     current_status = getattr(_tray_icon, "_last_status", None)
     current_level = getattr(_tray_icon, "_last_level", -1.0)
-    if status == current_status and abs(level - current_level) < 0.05:
+    current_error = getattr(_tray_icon, "_last_error_message", None)
+    if (
+        status == current_status
+        and abs(level - current_level) < 0.05
+        and error_message == current_error
+    ):
         return
     setattr(_tray_icon, "_last_status", status)
     setattr(_tray_icon, "_last_level", level)
+    setattr(_tray_icon, "_last_error_message", error_message)
 
     # Constant prefix to prevent icon reordering
     prefix = "MySuperWhisper: "
@@ -140,6 +147,9 @@ def update_tray(status, level=0.0):
     elif status == "sleeping":
         color = "gray"
         detail = "Sleeping (Inactive)"
+    elif status == "error":
+        color = "darkred"
+        detail = error_message or "Transcription failed — check logs"
 
     if audio.is_testing_mic():
         detail = f"Level: {int(level*100)}%"

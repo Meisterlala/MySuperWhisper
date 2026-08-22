@@ -384,6 +384,27 @@ def transcribe(audio_data, language=None, fast=False):
         raise
 
 
+def is_out_of_vram_error(exc):
+    """Return whether an exception represents a CUDA/GPU allocation failure."""
+    if _torch is not None:
+        cuda_module = getattr(_torch, "cuda", None)
+        oom_type = getattr(cuda_module, "OutOfMemoryError", None)
+        if oom_type is not None and isinstance(exc, oom_type):
+            return True
+
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "cuda out of memory",
+            "cublas_status_alloc_failed",
+            "cudnn_status_alloc_failed",
+            "hip out of memory",
+            "gpu out of memory",
+        )
+    )
+
+
 def is_cpu_mode():
     """Check if model is running in CPU mode (degraded)."""
     return _is_cpu_mode

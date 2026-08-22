@@ -481,9 +481,25 @@ def audio_processing_loop():
                 time.sleep(0.05)
             if not _is_model_loaded:
                 if _model_load_error:
-                    log(f"Skipping transcription because model failed to load: {_model_load_error}", "error")
+                    log(
+                        f"Skipping transcription because model failed to load: {_model_load_error}",
+                        "error",
+                    )
+                    if transcription.is_out_of_vram_error(_model_load_error):
+                        user_message = (
+                            "Out of GPU memory — close another GPU application and try again."
+                        )
+                        tray_message = "Out of VRAM — close another GPU app"
+                    else:
+                        user_message = f"Model failed to load: {_model_load_error}"
+                        tray_message = "Model failed to load — check logs"
                 else:
                     log("Skipping transcription because model is not loaded.", "error")
+                    user_message = "Transcription model is not loaded."
+                    tray_message = "Model is not loaded — check logs"
+                play_sound("error")
+                send_notification("MySuperWhisper", user_message, "dialog-error")
+                tray.update_tray("error", error_message=tray_message)
                 continue
 
         # Prepare audio for Granite speech transcription (downsample to 16kHz)
@@ -533,9 +549,21 @@ def audio_processing_loop():
         except Exception as e:
             log(f"Transcription error: {e}", "error")
             play_sound("error")
-            send_notification("MySuperWhisper", f"Error: {e}", "dialog-error")
+            if transcription.is_out_of_vram_error(e):
+                user_message = (
+                    "Out of GPU memory — close another GPU application and try again."
+                )
+                tray_message = "Out of VRAM — close another GPU app"
+                # A failed CUDA context can remain unusable and retain several GiB.
+                unload_model_on_demand()
+            else:
+                user_message = f"Error: {e}"
+                tray_message = "Transcription failed — check logs"
+            send_notification("MySuperWhisper", user_message, "dialog-error")
+            tray.update_tray("error", error_message=tray_message)
+            continue
 
-        # Return to idle state
+        # Return to idle state only after processing completed without an exception.
         tray.update_tray("idle")
 
 

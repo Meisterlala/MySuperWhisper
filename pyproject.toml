@@ -56,6 +56,9 @@ dev = [
     "black>=22.0.0",
     "flake8>=4.0.0",
 ]
+macos-build = [
+    "pyinstaller>=6.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/oliviermary/MySuperWhisper"

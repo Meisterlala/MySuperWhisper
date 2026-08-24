@@ -23,3 +23,22 @@ in the tray menu; the choice is persisted in `~/.config/mysuperwhisper/config.js
 The Granite preview model uses Flash Attention when `flash-attn` is installed and falls
 back to standard attention otherwise. CUDA is required for live preview; final Granite
 transcription falls back to CPU when CUDA is unavailable.
+
+## Installing on macOS
+
+```bash
+./install-mac.sh
+```
+
+Builds `MySuperWhisper.app`, installs it to `/Applications`, and registers a LaunchAgent
+so it starts at login. Re-run it any time to rebuild and reinstall. Grant Accessibility
+permission when prompted (System Settings opens automatically at the end).
+
+- `./launch-mac.sh` — restart the app after quitting it
+- `python remote_control.py --toggle` — start/stop recording remotely
+
+## Installing on Linux
+
+```bash
+./install.sh
+```

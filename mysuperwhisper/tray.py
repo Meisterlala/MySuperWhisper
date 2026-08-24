@@ -4,6 +4,7 @@ Provides visual feedback and configuration access.
 """
 
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -14,6 +15,8 @@ from . import audio
 from . import transcription
 
 # Global tray icon instance
+IS_MACOS = sys.platform == "darwin"
+
 _tray_icon = None
 
 # Callbacks (set by main module)
@@ -181,7 +184,8 @@ def refresh_menu():
 def _open_file_with_default_app(filepath):
     """Open a file with the system's default application."""
     try:
-        subprocess.Popen(["xdg-open", str(filepath)])
+        opener = ["open"] if IS_MACOS else ["xdg-open"]
+        subprocess.Popen(opener + [str(filepath)])
         log(f"Opening: {filepath}")
     except Exception as e:
         log(f"Error opening file {filepath}: {e}", "error")
@@ -309,6 +313,14 @@ def _on_show_history(icon, item):
 def _on_open_sound_settings(icon, item):
     """Open system sound settings."""
     try:
+        if IS_MACOS:
+            try:
+                subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.sound"])
+                log("Opened sound settings")
+            except Exception as e:
+                log(f"Error opening sound settings: {e}", "error")
+            return
+
         # Try different sound settings commands
         for cmd in [
             ["cinnamon-settings", "sound"],  # Cinnamon

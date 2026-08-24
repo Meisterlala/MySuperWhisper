@@ -5,17 +5,76 @@ Uses clipboard paste (Ctrl+V) for speed and reliability.
 
 import os
 import subprocess
+import sys
 import time
 import pyperclip
+from pynput.keyboard import Controller as _KeyboardController, Key as _Key
 from .config import log, config
+
+IS_MACOS = sys.platform == "darwin"
+
+_macos_controller = _KeyboardController() if IS_MACOS else None
+
+if IS_MACOS:
+    from AppKit import NSWorkspace
+
+# Terminal emulators whose frontmost bundle ID we recognize. pynput's
+# Controller.type() injects characters via CGEventKeyboardSetUnicodeString
+# with a placeholder keycode, which normal Cocoa text views accept fine but
+# terminal emulators generally ignore (they expect a real, mapped keycode).
+# Cmd+V goes through the ordinary keyDown path instead, so it works
+# everywhere -- we just need to detect terminals and force that path even
+# when "type directly" is the configured default.
+_MACOS_TERMINAL_BUNDLE_IDS = (
+    "com.apple.terminal",
+    "com.googlecode.iterm2",
+    "io.alacritty",
+    "net.kovidgoyal.kitty",
+    "com.mitchellh.ghostty",
+    "dev.warp.warp-stable",
+    "co.zeit.hyper",
+    "com.github.wez.wezterm",
+)
+
+
+def _macos_frontmost_bundle_id():
+    try:
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        return (app.bundleIdentifier() or "").lower()
+    except Exception:
+        return ""
+
+
+def _is_macos_terminal():
+    bundle_id = _macos_frontmost_bundle_id()
+    return any(term_id in bundle_id for term_id in _MACOS_TERMINAL_BUNDLE_IDS)
 
 
 def detect_session_type():
-    """Detect if running on Wayland or X11."""
+    """Detect if running on macOS, Wayland or X11."""
+    if IS_MACOS:
+        return "macos"
     # Check for WAYLAND_DISPLAY first as XDG_SESSION_TYPE can be unreliable
     if os.environ.get("WAYLAND_DISPLAY"):
         return "wayland"
     return os.environ.get("XDG_SESSION_TYPE", "").lower()
+
+
+def _macos_type(text):
+    """Type literal text using pynput (handles unicode)."""
+    _macos_controller.type(text)
+
+
+def _macos_key_combo(modifiers, key):
+    """Press a key combo (e.g. Cmd+V) using pynput."""
+    for mod in modifiers:
+        _macos_controller.press(mod)
+    try:
+        _macos_controller.press(key)
+        _macos_controller.release(key)
+    finally:
+        for mod in reversed(modifiers):
+            _macos_controller.release(mod)
 
 
 def _is_terminal(session_type):
@@ -70,6 +129,18 @@ def paste_text(text, press_enter=False):
     """
     session_type = detect_session_type()
 
+    # macOS terminals don't reliably receive pynput's synthetic-unicode typed
+    # characters (see _MACOS_TERMINAL_BUNDLE_IDS above), so force a real
+    # Cmd+V there regardless of the "type directly" preference. Enter is
+    # still only sent when press_enter was explicitly requested (i.e. the
+    # user spoke a validate keyword), same as on Linux.
+    if session_type == "macos" and _is_macos_terminal():
+        _paste_clipboard(text, session_type)
+        if press_enter:
+            time.sleep(0.05)
+            _press_key("Return", session_type)
+        return
+
     # Default mode: type the text directly, leaving the clipboard (and any
     # clipboard-manager history) untouched. The clipboard path below is opt-in.
     if not config.use_clipboard_to_paste:
@@ -79,8 +150,9 @@ def paste_text(text, press_enter=False):
             _press_key("Return", session_type)
         return
 
-    # Check if we are in a terminal
-    if _is_terminal(session_type):
+    # Check if we are in a terminal (macOS terminals accept plain Cmd+V, so
+    # there is no need for the Ctrl+Shift+V special case used on Linux)
+    if not IS_MACOS and _is_terminal(session_type):
         # Terminals (mostly) use Ctrl+Shift+V for paste
         # and handle multiline paste better as a single block.
         _paste_clipboard(text, session_type, force_ctrl_shift_v=True)
@@ -108,7 +180,10 @@ def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
     time.sleep(0.05)  # Slightly increased delay for reliability
 
     try:
-        if session_type == "wayland":
+        if session_type == "macos":
+            modifiers = [_Key.cmd, _Key.shift] if force_ctrl_shift_v else [_Key.cmd]
+            _macos_key_combo(modifiers, "v")
+        elif session_type == "wayland":
             if force_ctrl_shift_v:
                 # Ctrl+Shift+V on Wayland
                 subprocess.run(["wtype", "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
@@ -119,7 +194,7 @@ def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
             key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
             # X11
             subprocess.run(["xdotool", "key", "--clearmodifiers", key_combo])
-            
+
     except FileNotFoundError as e:
         log(f"Paste tool not found: {e}", "error")
 
@@ -150,7 +225,9 @@ def _type_text(text, session_type):
     for i, line in enumerate(lines):
         if line:
             try:
-                if session_type == "wayland":
+                if session_type == "macos":
+                    _macos_type(line)
+                elif session_type == "wayland":
                     subprocess.run(["wtype", "--", line])
                 else:
                     subprocess.run(["xdotool", "type", "--clearmodifiers", "--", line])
@@ -168,7 +245,19 @@ def _type_text(text, session_type):
 def _press_key(key, session_type):
     """Press a key or key combination."""
     try:
-        if session_type == "wayland":
+        if session_type == "macos":
+            if '+' in key:
+                parts = key.split('+')
+                modifier_name = parts[0].lower()
+                keyname = parts[1]
+                modifier = _Key.shift if modifier_name == "shift" else _Key.ctrl
+                key_obj = _Key.enter if keyname == "Return" else keyname
+                _macos_key_combo([modifier], key_obj)
+            else:
+                key_obj = _Key.enter if key == "Return" else key
+                _macos_controller.press(key_obj)
+                _macos_controller.release(key_obj)
+        elif session_type == "wayland":
             if '+' in key:
                 # Handle modifier+key combo (e.g., "shift+Return")
                 parts = key.split('+')

@@ -2,7 +2,7 @@
 # PyInstaller spec for the macOS MySuperWhisper.app bundle.
 #
 # Build from the project root with:
-#   .venv/bin/pyinstaller packaging/mysuperwhisper.spec --noconfirm
+#   venv/bin/pyinstaller packaging/mysuperwhisper.spec --noconfirm
 #
 # Heavy ML deps (torch/transformers/accelerate/etc.) don't always get fully
 # picked up by PyInstaller's static import scan, so they're pulled in

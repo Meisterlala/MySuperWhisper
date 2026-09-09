@@ -34,6 +34,7 @@ import os
 import queue
 import re
 import signal
+import socket
 import sys
 import threading
 import time
@@ -49,6 +50,10 @@ from .voice_commands import process_voice_commands
 # Remote-control "stop" signal: SIGRTMIN doesn't exist on macOS, so fall back
 # to SIGINFO there (both are otherwise unused by the app).
 STOP_SIGNAL = getattr(signal, "SIGRTMIN", None) or signal.SIGINFO
+
+# Unix socket used for remote control on macOS (see _start_remote_control_socket).
+# Must match remote_control.REMOTE_SOCKET_PATH.
+REMOTE_SOCKET_PATH = "/tmp/mysuperwhisper.sock"
 
 # Processing queue
 processing_queue = queue.Queue()
@@ -657,6 +662,11 @@ def startup_worker():
 
 def on_quit():
     """Handle application quit."""
+    if sys.platform == "darwin":
+        try:
+            os.remove(REMOTE_SOCKET_PATH)
+        except OSError:
+            pass
     os._exit(0)
 
 
@@ -685,9 +695,6 @@ def signal_handler(signum, frame):
         _dispatch_remote_command("stop")
 
 
-REMOTE_SOCKET_PATH = "/tmp/mysuperwhisper.sock"
-
-
 def _start_remote_control_socket():
     """
     Start a background Unix-socket listener for remote control (macOS).
@@ -700,8 +707,6 @@ def _start_remote_control_socket():
     running (and can call back into app logic) regardless of what the main
     thread is blocked on.
     """
-    import socket
-
     try:
         if os.path.exists(REMOTE_SOCKET_PATH):
             os.remove(REMOTE_SOCKET_PATH)
@@ -729,8 +734,6 @@ def _start_remote_control_socket():
 
 def _send_remote_command_macos(command):
     """Send a remote-control command to a running instance's Unix socket."""
-    import socket
-
     try:
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(2.0)

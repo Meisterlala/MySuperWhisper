@@ -113,7 +113,8 @@ def _build_prompt():
     )
 
 
-def _flush_cuda_cache():
+def _flush_gpu_cache():
+    """Release cached GPU allocations (CUDA or Apple MPS), if a GPU is in use."""
     if _torch is None:
         return
 
@@ -142,7 +143,7 @@ def _load_model_with_low_cpu_memory(model_class, model_name, device, **kwargs):
         if model is not None:
             del model
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         raise
 
 
@@ -212,7 +213,7 @@ def _load_main_model_with_cpu_fallback(model_name):
     # to partially loaded CUDA tensors until the exception variable is released.
     if gpu_oom:
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         log(
             "GPU memory is insufficient; loading the transcription model in system RAM.",
             "warning",
@@ -252,7 +253,7 @@ def _load_preview_model(model_name, generation):
         if generation != _model_generation:
             del model
             gc.collect()
-            _flush_cuda_cache()
+            _flush_gpu_cache()
             log("Discarded stale Granite preview model load.", "debug")
             return
         _preview_processor = processor
@@ -384,7 +385,7 @@ def unload_model():
         _main_device = None
 
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         if unloaded:
             log("CUDA model cache released.")
         return unloaded
@@ -479,7 +480,7 @@ def transcribe(audio_data, language=None, fast=False):
     with _model_lock:
         unload_model()
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         _load_main_model(config.transcription_model, force_cpu=True)
         return _transcribe_with_main_model(audio_data)
 

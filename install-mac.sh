@@ -43,15 +43,15 @@ step "Provisioning a standalone Python 3.13 (managed by uv, not Homebrew)..."
 uv python install 3.13
 
 step "Creating project virtual environment..."
-rm -rf "$PROJECT_DIR/.venv"
-uv venv --python 3.13 "$PROJECT_DIR/.venv"
+rm -rf "$PROJECT_DIR/venv"
+uv venv --python 3.13 "$PROJECT_DIR/venv"
 
 step "Installing dependencies..."
-uv pip install --python "$PROJECT_DIR/.venv/bin/python" -e "$PROJECT_DIR[macos-build]"
+uv pip install --python "$PROJECT_DIR/venv/bin/python" -e "$PROJECT_DIR[macos-build]"
 
 step "Building MySuperWhisper.app..."
 rm -rf "$PROJECT_DIR/build" "$PROJECT_DIR/dist"
-(cd "$PROJECT_DIR" && "$PROJECT_DIR/.venv/bin/pyinstaller" packaging/mysuperwhisper.spec --noconfirm)
+(cd "$PROJECT_DIR" && "$PROJECT_DIR/venv/bin/pyinstaller" packaging/mysuperwhisper.spec --noconfirm)
 
 step "Installing app to /Applications..."
 if launchctl list "$LAUNCH_AGENT_LABEL" &>/dev/null; then

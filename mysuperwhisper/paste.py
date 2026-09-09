@@ -15,8 +15,15 @@ IS_MACOS = sys.platform == "darwin"
 
 _macos_controller = _KeyboardController() if IS_MACOS else None
 
+# AppKit (pyobjc) is only used to identify the frontmost app on macOS. It is a
+# hard dependency there, but keep the app usable if it is somehow missing:
+# without it, terminal detection just degrades to "not a terminal".
+NSWorkspace = None
 if IS_MACOS:
-    from AppKit import NSWorkspace
+    try:
+        from AppKit import NSWorkspace
+    except ImportError:
+        log("pyobjc (AppKit) is unavailable; macOS terminal detection is disabled.", "warning")
 
 # Terminal emulators whose frontmost bundle ID we recognize. pynput's
 # Controller.type() injects characters via CGEventKeyboardSetUnicodeString
@@ -38,6 +45,8 @@ _MACOS_TERMINAL_BUNDLE_IDS = (
 
 
 def _macos_frontmost_bundle_id():
+    if NSWorkspace is None:
+        return ""
     try:
         app = NSWorkspace.sharedWorkspace().frontmostApplication()
         return (app.bundleIdentifier() or "").lower()

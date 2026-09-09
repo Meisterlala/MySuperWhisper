@@ -6,11 +6,29 @@ Handles system notifications (notify-send) and audio feedback (beeps).
 import io
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
 import numpy as np
 from .config import log, config
+
+IS_MACOS = sys.platform == "darwin"
+
+
+def _as_string_literal(text):
+    """Escape and quote a string for embedding in an AppleScript command."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _osascript_notify(title, message):
+    """Send a notification via AppleScript (no extra dependency required)."""
+    script = (
+        f"display notification {_as_string_literal(message)} "
+        f"with title {_as_string_literal(title)}"
+    )
+    subprocess.Popen(["osascript", "-e", script])
 
 
 def send_live_notification(text):
@@ -19,6 +37,9 @@ def send_live_notification(text):
     Bypasses the global system_notifications_enabled setting.
     """
     try:
+        if IS_MACOS:
+            _osascript_notify("MySuperWhisper (Live)", text)
+            return
         cmd = [
             "notify-send",
             "-i", "audio-input-microphone",
@@ -42,6 +63,9 @@ def send_notification(title, message, icon="dialog-information"):
         return
 
     try:
+        if IS_MACOS:
+            _osascript_notify(title, message)
+            return
         cmd = [
             "notify-send",
             "-i", icon,
@@ -133,19 +157,28 @@ def play_sound(sound_type):
                 temp_path = f.name
                 f.write(wav_data_to_play)
 
-            # Play with paplay (PulseAudio) - most reliable
             try:
-                subprocess.run(
-                    ["paplay", "--latency-msec=10", temp_path],
-                    capture_output=True,
-                    timeout=2
-                )
-            except FileNotFoundError:
-                # Fallback to aplay (ALSA)
-                try:
-                    subprocess.run(["aplay", "-q", temp_path], timeout=2)
-                except FileNotFoundError:
-                    pass
+                if IS_MACOS:
+                    try:
+                        # -v sets afplay's own playback volume, independent of
+                        # the system output volume (per-app only).
+                        subprocess.run(["afplay", "-v", "0.5", temp_path], timeout=2)
+                    except FileNotFoundError:
+                        log("afplay not found.", "warning")
+                else:
+                    # Play with paplay (PulseAudio) - most reliable
+                    try:
+                        subprocess.run(
+                            ["paplay", "--latency-msec=10", temp_path],
+                            capture_output=True,
+                            timeout=2
+                        )
+                    except FileNotFoundError:
+                        # Fallback to aplay (ALSA)
+                        try:
+                            subprocess.run(["aplay", "-q", temp_path], timeout=2)
+                        except FileNotFoundError:
+                            pass
             finally:
                 # Clean up temporary file
                 try:

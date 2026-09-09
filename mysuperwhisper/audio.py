@@ -10,11 +10,14 @@ import os
 import queue
 import subprocess
 import re
+import sys
 import time
 import threading
 import numpy as np
 import sounddevice as sd
 from .config import log, config
+
+IS_MACOS = sys.platform == "darwin"
 
 # Audio settings
 SAMPLE_RATE = 48000  # Best hardware compatibility
@@ -48,6 +51,57 @@ def _get_pulse_device_index():
     return None
 
 
+def _macos_default_device_name(kind):
+    """Get the CoreAudio default input/output device name via sounddevice."""
+    try:
+        return sd.query_devices(kind=kind)["name"]
+    except Exception:
+        return None
+
+
+def _macos_get_devices(kind):
+    """
+    Enumerate CoreAudio devices via sounddevice (no PulseAudio on macOS).
+
+    Args:
+        kind: 'input' or 'output'
+
+    Returns:
+        list: List of dicts with 'name', 'description', 'is_default'
+    """
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    devices = []
+
+    try:
+        default_name = _macos_default_device_name(kind)
+        for dev in sd.query_devices():
+            if dev.get(channel_key, 0) <= 0:
+                continue
+            devices.append({
+                "name": dev["name"],
+                "description": dev["name"],
+                "is_default": dev["name"] == default_name,
+            })
+    except Exception as e:
+        log(f"Error listing CoreAudio {kind} devices: {e}", "warning")
+
+    return devices
+
+
+def _macos_find_device_index(name, kind):
+    """Find the sounddevice index for a device name (macOS)."""
+    if not name:
+        return None
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    try:
+        for i, dev in enumerate(sd.query_devices()):
+            if dev.get(channel_key, 0) > 0 and dev["name"] == name:
+                return i
+    except Exception as e:
+        log(f"Error finding CoreAudio device '{name}': {e}", "warning")
+    return None
+
+
 def get_pulse_sources():
     """
     Get list of PulseAudio input sources (microphones).
@@ -56,6 +110,9 @@ def get_pulse_sources():
     Returns:
         list: List of dicts with 'name', 'description', 'is_default'
     """
+    if IS_MACOS:
+        return _macos_get_devices("input")
+
     global _pulse_sources_cache
     sources = []
 
@@ -109,6 +166,9 @@ def get_pulse_sinks():
     Returns:
         list: List of dicts with 'name', 'description', 'is_default'
     """
+    if IS_MACOS:
+        return _macos_get_devices("output")
+
     global _pulse_sinks_cache
     sinks = []
 
@@ -254,6 +314,32 @@ def start_stream(device_index=None):
 
     if _stream:
         stop_stream()
+
+    if IS_MACOS:
+        try:
+            device = _macos_find_device_index(config.input_device, "input")
+            if config.input_device and device is None:
+                log(f"Input device '{config.input_device}' not found, using system default.", "warning")
+
+            log("Opening audio stream via CoreAudio...")
+            _stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                device=device,
+                channels=1,
+                callback=_audio_callback
+            )
+            _stream.start()
+            log("Audio stream started")
+        except Exception as e:
+            log(f"Cannot open CoreAudio input device: {e}", "warning")
+            log("Trying default device...", "warning")
+            _stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                callback=_audio_callback
+            )
+            _stream.start()
+        return
 
     try:
         # Always use pulse device - actual mic is selected via pactl
@@ -444,19 +530,24 @@ def mic_test_worker(update_ui_callback):
     last_ui_update = 0
 
     try:
-        # Use pulse device for output too
-        pulse_idx = _get_pulse_device_index()
+        if IS_MACOS:
+            out_device = _macos_find_device_index(config.output_device, "output")
+            if config.output_device and out_device is None:
+                log(f"Output device '{config.output_device}' not found, using system default.", "warning")
+        else:
+            # Use pulse device for output too
+            out_device = _get_pulse_device_index()
 
-        # Set PulseAudio sink from config if specified
-        if config.output_device:
-            os.environ["PULSE_SINK"] = config.output_device
-            log(f"Using output device: {config.output_device}")
-        elif "PULSE_SINK" in os.environ:
-            del os.environ["PULSE_SINK"]
+            # Set PulseAudio sink from config if specified
+            if config.output_device:
+                os.environ["PULSE_SINK"] = config.output_device
+                log(f"Using output device: {config.output_device}")
+            elif "PULSE_SINK" in os.environ:
+                del os.environ["PULSE_SINK"]
 
         with sd.OutputStream(
             samplerate=SAMPLE_RATE,
-            device=pulse_idx,
+            device=out_device,
             channels=2,
             blocksize=0
         ) as out:

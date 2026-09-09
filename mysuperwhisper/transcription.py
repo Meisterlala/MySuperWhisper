@@ -6,6 +6,7 @@ Handles model loading and speech-to-text conversion.
 import gc
 import importlib
 import importlib.util
+import math
 import threading
 from typing import Any
 
@@ -17,6 +18,7 @@ _main_processor: Any = None
 _main_tokenizer: Any = None
 _preview_model: Any = None
 _preview_processor: Any = None
+_preview_device: Any = None
 _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
@@ -43,12 +45,62 @@ def _ensure_dependencies():
 
     _torch = torch
     _transformers = transformers
+    _patch_granite_speech_projector_batch_bug()
+
+
+def _patch_granite_speech_projector_batch_bug():
+    """
+    Work around a bug in transformers' GraniteSpeechEncoderProjector: it feeds
+    a batch-size-1 query tensor into the Q-Former without expanding it to the
+    actual batch size (batch_size * nblocks), so any audio spanning more than
+    one 15-frame window (i.e. essentially all real recordings, not just Mac
+    ones) fails with a "shape '[1, N, -1]' is invalid" reshape error. This is
+    an upstream transformers bug, not device-specific; patched here until a
+    fixed release ships.
+    """
+    try:
+        from transformers.models.granite_speech.modeling_granite_speech import (
+            GraniteSpeechEncoderProjector,
+        )
+    except ImportError:
+        return
+
+    def _patched_forward(self, hidden_states):
+        batch_size, seq_len, dim = hidden_states.size()
+        nblocks = math.ceil(seq_len / self.window_size)
+        pad = nblocks * self.window_size - seq_len
+        hidden_states = _torch.nn.functional.pad(hidden_states, (0, 0, 0, pad), "constant", 0)
+        hidden_states = hidden_states.view(batch_size * nblocks, self.window_size, dim)
+
+        query_embeds = self.query.expand(hidden_states.shape[0], -1, -1)
+        query_output = self.qformer(
+            query_embeds=query_embeds,
+            encoder_hidden_states=hidden_states,
+            encoder_attention_mask=None,
+            return_dict=True,
+        )
+        query_proj = self.linear(
+            query_output.last_hidden_state.view(
+                batch_size, nblocks * self.window_size // self.downsample_rate, -1
+            )
+        )
+        return query_proj
+
+    GraniteSpeechEncoderProjector.forward = _patched_forward
 
 
 def _get_device_and_dtype(force_cpu=False):
     if not force_cpu and _torch.cuda.is_available():
         dtype = _torch.bfloat16 if _torch.cuda.is_bf16_supported() else _torch.float16
         return "cuda", dtype, False
+    if (
+        not force_cpu
+        and getattr(_torch.backends, "mps", None) is not None
+        and _torch.backends.mps.is_available()
+    ):
+        # MPS (Apple Silicon GPU) has patchy bf16/fp16 kernel coverage for this
+        # model family; float32 is the reliable choice.
+        return "mps", _torch.float32, False
     return "cpu", _torch.bfloat16, True
 
 
@@ -61,15 +113,19 @@ def _build_prompt():
     )
 
 
-def _flush_cuda_cache():
-    if _torch is None or not _torch.cuda.is_available():
+def _flush_gpu_cache():
+    """Release cached GPU allocations (CUDA or Apple MPS), if a GPU is in use."""
+    if _torch is None:
         return
 
-    _torch.cuda.empty_cache()
-    try:
-        _torch.cuda.ipc_collect()
-    except RuntimeError as exc:
-        log(f"CUDA IPC cleanup skipped: {exc}", "debug")
+    if _torch.cuda.is_available():
+        _torch.cuda.empty_cache()
+        try:
+            _torch.cuda.ipc_collect()
+        except RuntimeError as exc:
+            log(f"CUDA IPC cleanup skipped: {exc}", "debug")
+    elif getattr(_torch.backends, "mps", None) is not None and _torch.backends.mps.is_available():
+        _torch.mps.empty_cache()
 
 
 def _load_model_with_low_cpu_memory(model_class, model_name, device, **kwargs):
@@ -87,7 +143,7 @@ def _load_model_with_low_cpu_memory(model_class, model_name, device, **kwargs):
         if model is not None:
             del model
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         raise
 
 
@@ -157,7 +213,7 @@ def _load_main_model_with_cpu_fallback(model_name):
     # to partially loaded CUDA tensors until the exception variable is released.
     if gpu_oom:
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         log(
             "GPU memory is insufficient; loading the transcription model in system RAM.",
             "warning",
@@ -166,46 +222,49 @@ def _load_main_model_with_cpu_fallback(model_name):
 
 
 def _load_preview_model(model_name, generation):
-    global _preview_model, _preview_processor
+    global _preview_model, _preview_processor, _preview_device
 
-    if not _torch.cuda.is_available():
-        log("Live preview model disabled because CUDA is unavailable.", "warning")
+    device, dtype, cpu_mode = _get_device_and_dtype()
+    if cpu_mode:
+        log("Live preview model disabled because no GPU (CUDA/MPS) is available.", "warning")
         return
 
     try:
-        log(f"Loading Granite preview model '{model_name}' on cuda...")
+        log(f"Loading Granite preview model '{model_name}' on {device}...")
         processor = _transformers.AutoProcessor.from_pretrained(
             model_name,
             trust_remote_code=True,
         )
         model_kwargs = {
             "trust_remote_code": True,
-            "torch_dtype": _get_device_and_dtype()[1],
+            "torch_dtype": dtype,
         }
-        if importlib.util.find_spec("flash_attn") is not None:
+        if device == "cuda" and importlib.util.find_spec("flash_attn") is not None:
             model_kwargs["attn_implementation"] = "flash_attention_2"
-        else:
+        elif device == "cuda":
             log("flash-attn is unavailable; loading Granite preview with standard attention.")
         model = _load_model_with_low_cpu_memory(
             _transformers.AutoModel,
             model_name,
-            "cuda",
+            device,
             **model_kwargs,
         )
         model.eval()
         if generation != _model_generation:
             del model
             gc.collect()
-            _flush_cuda_cache()
+            _flush_gpu_cache()
             log("Discarded stale Granite preview model load.", "debug")
             return
         _preview_processor = processor
         _preview_model = model
-        log("Granite preview model loaded on GPU.")
+        _preview_device = device
+        log(f"Granite preview model loaded on {device}.")
     except Exception as exc:
         if generation == _model_generation:
             _preview_model = None
             _preview_processor = None
+            _preview_device = None
         log(f"Preview model unavailable: {exc}", "warning")
 
 
@@ -266,7 +325,7 @@ def reload_model(new_model_name=None, preview_model_name=None):
     Returns:
         bool: True if successful
     """
-    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
+    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor, _preview_device
 
     with _model_lock:
         _ensure_dependencies()
@@ -292,13 +351,14 @@ def reload_model(new_model_name=None, preview_model_name=None):
             _main_tokenizer = None
             _preview_model = None
             _preview_processor = None
+            _preview_device = None
             return False
 
 
 def unload_model():
     """Unload Granite speech models to free memory/VRAM."""
     global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
-    global _is_cpu_mode, _main_device, _model_generation
+    global _is_cpu_mode, _main_device, _model_generation, _preview_device
 
     with _model_lock:
         _model_generation += 1
@@ -320,11 +380,12 @@ def unload_model():
         _main_processor = None
         _main_tokenizer = None
         _preview_processor = None
+        _preview_device = None
         _is_cpu_mode = False
         _main_device = None
 
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         if unloaded:
             log("CUDA model cache released.")
         return unloaded
@@ -369,7 +430,7 @@ def _transcribe_with_main_model(audio_data):
 
 
 def _transcribe_with_preview_model(audio_data):
-    inputs = _preview_processor([audio_data], device="cuda")
+    inputs = _preview_processor([audio_data], device=_preview_device)
     with _model_lock:
         with _torch.inference_mode():
             output = _preview_model.transcribe(**inputs)
@@ -419,7 +480,7 @@ def transcribe(audio_data, language=None, fast=False):
     with _model_lock:
         unload_model()
         gc.collect()
-        _flush_cuda_cache()
+        _flush_gpu_cache()
         _load_main_model(config.transcription_model, force_cpu=True)
         return _transcribe_with_main_model(audio_data)
 

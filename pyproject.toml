@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mysuperwhisper"
 version = "1.6.1"
-description = "Global voice dictation for Linux using IBM Granite Speech"
+description = "Global voice dictation for Linux and macOS using IBM Granite Speech"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
@@ -17,14 +17,17 @@ keywords = [
     "voice-dictation",
     "transcription",
     "linux",
+    "macos",
     "accessibility"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: X11 Applications",
+    "Environment :: MacOS X",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -48,6 +51,8 @@ dependencies = [
     "pynput>=1.7.6",
     "pystray>=0.19.4",
     "Pillow>=12.1.1",
+    # Used by paste.py to identify the frontmost app on macOS.
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +60,9 @@ dev = [
     "pytest>=7.0.0",
     "black>=22.0.0",
     "flake8>=4.0.0",
+]
+macos-build = [
+    "pyinstaller>=6.0.0",
 ]
 
 [project.urls]

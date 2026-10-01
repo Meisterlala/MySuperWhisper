@@ -11,4 +11,5 @@ pystray
 Pillow>=12.1.1
 pyperclip
 regex
+evdev; sys_platform == "linux"
 pyobjc-framework-Cocoa; sys_platform == "darwin"

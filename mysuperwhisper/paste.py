@@ -3,6 +3,7 @@ Text pasting functionality for MySuperWhisper.
 Uses clipboard paste (Ctrl+V) for speed and reliability.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -121,6 +122,64 @@ def _is_terminal(session_type):
 
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
         return False
+
+
+def focused_target():
+    """Best-effort identity of the focused window (or app on macOS).
+
+    Return None when it cannot be checked: live editing must fail closed.
+    """
+    try:
+        session = detect_session_type()
+        if session == "macos":
+            if NSWorkspace is None or _is_macos_terminal():
+                return None  # Synthetic Unicode typing does not work in terminals.
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            return ("macos", app.processIdentifier()) if app else None
+        if session == "wayland":
+            result = subprocess.run(
+                ["hyprctl", "activewindow", "-j"], capture_output=True,
+                text=True, timeout=0.5,
+            )
+            address = json.loads(result.stdout).get("address") if result.returncode == 0 else None
+            return ("hyprland", address) if address and address != "0x" else None
+        result = subprocess.run(
+            ["xdotool", "getactivewindow"], capture_output=True,
+            text=True, timeout=0.5,
+        )
+        window = result.stdout.strip() if result.returncode == 0 else ""
+        return ("x11", window) if window else None
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return None
+
+
+def type_live_edit(backspaces, suffix):
+    """Send a correction without touching the clipboard; raise on injection failure."""
+    session = detect_session_type()
+    for _ in range(backspaces):
+        if session == "macos":
+            _macos_controller.press(_Key.backspace)
+            _macos_controller.release(_Key.backspace)
+        elif session == "wayland":
+            subprocess.run(["wtype", "-k", "BackSpace"], check=True)
+        else:
+            subprocess.run(["xdotool", "key", "--clearmodifiers", "BackSpace"], check=True)
+
+    for index, line in enumerate(suffix.split("\n")):
+        if index:
+            if session == "macos":
+                _macos_key_combo([_Key.shift], _Key.enter)
+            elif session == "wayland":
+                subprocess.run(["wtype", "-M", "shift", "-k", "Return", "-m", "shift"], check=True)
+            else:
+                subprocess.run(["xdotool", "key", "--clearmodifiers", "shift+Return"], check=True)
+        if line:
+            if session == "macos":
+                _macos_type(line)
+            elif session == "wayland":
+                subprocess.run(["wtype", "--", line], check=True)
+            else:
+                subprocess.run(["xdotool", "type", "--clearmodifiers", "--", line], check=True)
 
 
 def paste_text(text, press_enter=False):

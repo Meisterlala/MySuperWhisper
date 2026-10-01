@@ -68,6 +68,7 @@ class Config:
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.live_preview_enabled = True
+        self.live_typing_enabled = False
         self.chunked_ahead_decoding_enabled = False
         self.voice_commands_enabled = True
         self.unload_model_after_inactivity = True
@@ -99,6 +100,7 @@ class Config:
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.live_preview_enabled = data.get("live_preview_enabled", True)
+                self.live_typing_enabled = data.get("live_typing_enabled", False)
                 self.chunked_ahead_decoding_enabled = data.get(
                     "chunked_ahead_decoding_enabled", False
                 )
@@ -124,6 +126,7 @@ class Config:
                 if ("language" not in data or
                     "record_hotkey" not in data or "record_press_count" not in data or
                     "use_clipboard_to_paste" not in data or
+                    "live_typing_enabled" not in data or
                     "keyboard_shortcuts_enabled" not in data):
                     log("Updating config file with new fields")
                     needs_save = True
@@ -147,6 +150,7 @@ class Config:
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "live_preview_enabled": self.live_preview_enabled,
+                "live_typing_enabled": self.live_typing_enabled,
                 "chunked_ahead_decoding_enabled": self.chunked_ahead_decoding_enabled,
                 "voice_commands_enabled": self.voice_commands_enabled,
                 "unload_model_after_inactivity": self.unload_model_after_inactivity,

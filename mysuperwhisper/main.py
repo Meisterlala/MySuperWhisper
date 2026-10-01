@@ -43,7 +43,8 @@ import numpy as np
 from . import audio, history, keyboard, transcription, tray
 from .config import CONFIG_DIR, LOG_FILE, config, log
 from .notifications import play_sound, send_live_notification, send_notification
-from .paste import paste_text, press_enter_key
+from .paste import focused_target, paste_text, press_enter_key
+from .live_typing import LiveTypingSession
 from .voice_commands import process_voice_commands
 
 # Remote-control "stop" signal: SIGRTMIN doesn't exist on macOS, so fall back
@@ -61,6 +62,7 @@ processing_queue = queue.Queue()
 args = None
 
 # Chunked ahead decoding tuning
+LIVE_UPDATE_INTERVAL = 0.3  # Seconds between live transcription attempts.
 CHUNK_CHECK_INTERVAL = 1.0
 CHUNK_MIN_COMMIT_SECONDS = 8.0
 CHUNK_TAIL_SECONDS = 4.0
@@ -104,6 +106,8 @@ _is_model_loading = False
 _model_load_error = None
 _chunked_decode_state = None
 _chunked_decode_thread = None
+_live_typing_session = None
+_preview_stop = None
 
 # Inactivity timeouts (seconds)
 AUTO_SLEEP_TIMEOUT = 15
@@ -362,6 +366,15 @@ def _transcribe_final_audio(audio_16k, prefetched=None):
 def start_recording():
     """Start voice recording."""
     global _is_recording, _live_preview_thread, _chunked_decode_state, _chunked_decode_thread
+    global _live_typing_session, _preview_stop
+    if _live_typing_session is not None and not _live_typing_session.finished:
+        log("Waiting for live typing to finish before starting another recording", "warning")
+        return
+    target = focused_target() if config.live_typing_enabled else None
+    _live_typing_session = LiveTypingSession(target) if target else None
+    if config.live_typing_enabled and target is None:
+        log("Live typing unavailable: focused target cannot be verified; final paste only", "warning")
+    _preview_stop = threading.Event()
     _is_recording = True
 
     audio.start_recording()
@@ -376,7 +389,9 @@ def start_recording():
     threading.Thread(target=_notify, daemon=True).start()
 
     # Start live preview loop
-    _live_preview_thread = threading.Thread(target=live_preview_worker, daemon=True)
+    _live_preview_thread = threading.Thread(
+        target=live_preview_worker, args=(_preview_stop, _live_typing_session), daemon=True
+    )
     _live_preview_thread.start()
 
     if config.chunked_ahead_decoding_enabled:
@@ -393,10 +408,16 @@ def stop_and_process():
     """Stop recording and queue audio for processing."""
     global _is_recording
     _is_recording = False
+    _preview_stop.set()
+    session = _live_typing_session
+    if session is not None:
+        session.stop()
 
     audio_data = audio.stop_recording()
 
     if audio_data is None:
+        if session is not None:
+            session.finish("")
         play_sound("error")
         tray.update_tray("idle")
         return
@@ -404,6 +425,8 @@ def stop_and_process():
     # Check minimum duration (1 second at 48kHz)
     if len(audio_data) < 48000:
         log("Recording too short (< 1s), ignoring.", "warning")
+        if session is not None:
+            session.finish("")
         # No error sound for short recordings as requested
         tray.update_tray("idle")
         return
@@ -416,24 +439,24 @@ def stop_and_process():
         {
             "audio_data": audio_data,
             "prefetched": _collect_chunked_decode_result(audio_data),
+            "live_typing_session": session,
         }
     )
 
 
-def live_preview_worker():
+def live_preview_worker(stop_event, session):
     """Worker thread for live transcription preview."""
     log("Live preview worker started", "debug")
     last_preview_time = time.time()
 
-    while _is_recording:
-        time.sleep(0.05)
-        if not config.live_preview_enabled:
+    while not stop_event.wait(0.05):
+        if not config.live_preview_enabled and session is None:
             break
 
         now = time.time()
 
-        # Update preview every 0.6 seconds if we have audio and model is loaded
-        if now - last_preview_time >= 0.6:
+        # Update preview and live typing when audio and the model are ready.
+        if now - last_preview_time >= LIVE_UPDATE_INTERVAL:
             if not _is_model_loaded:
                 # Suspend live output until model is loaded
                 continue
@@ -447,8 +470,15 @@ def live_preview_worker():
                         # Use fast mode (beam_size=1) for live preview
                         text = transcription.transcribe(audio_16k, fast=True)
                         # log(f"Live preview text: '{text}'", "debug")
+                        if stop_event.is_set():
+                            break
                         if text:
-                            send_live_notification(text)
+                            if config.live_preview_enabled:
+                                send_live_notification(text)
+                            if session is not None:
+                                preview_text = (process_voice_commands(text)[0]
+                                                if config.voice_commands_enabled else text)
+                                session.preview(preview_text)
                     except Exception as e:
                         log(f"Live preview error: {e}", "debug")
             last_preview_time = now
@@ -466,9 +496,11 @@ def audio_processing_loop():
         if isinstance(work_item, dict):
             audio_data = work_item["audio_data"]
             prefetched = work_item.get("prefetched")
+            session = work_item.get("live_typing_session")
         else:
             audio_data = work_item
             prefetched = None
+            session = None
 
         # Optional debug playback
         if args and args.playback:
@@ -509,12 +541,13 @@ def audio_processing_loop():
                 play_sound("error")
                 send_notification("MySuperWhisper", user_message, "dialog-error")
                 tray.update_tray("error", error_message=tray_message)
+                if session is not None:
+                    session.finish("")
                 continue
 
-        # Prepare audio for Granite speech transcription (downsample to 16kHz)
-        audio_16k = audio.prepare_for_transcription(audio_data)
-
         try:
+            # Prepare audio for Granite speech transcription (downsample to 16kHz)
+            audio_16k = audio.prepare_for_transcription(audio_data)
             # Transcribe
             text = _transcribe_final_audio(audio_16k, prefetched=prefetched)
 
@@ -533,7 +566,11 @@ def audio_processing_loop():
 
                 if processed_text:
                     # Paste the text
-                    paste_text(processed_text, press_enter=should_validate)
+                    if session is not None:
+                        delivered = session.finish(processed_text, press_enter=should_validate)
+                    else:
+                        paste_text(processed_text, press_enter=should_validate)
+                        delivered = True
 
                     # Add to history (original text)
                     history.add_to_history(text)
@@ -541,14 +578,27 @@ def audio_processing_loop():
                     # Success notification
                     send_notification(
                         "MySuperWhisper",
-                        f"Text pasted ({len(processed_text)} chars)",
-                        "dialog-ok",
+                        (f"Text typed ({len(processed_text)} chars)" if delivered
+                         else "Live typing stopped: focus changed or input failed; text saved in history"),
+                        "dialog-ok" if delivered else "dialog-warning",
                     )
                 elif should_validate:
                     # Just validation keyword without text -> press Enter
-                    press_enter_key()
-                    send_notification("MySuperWhisper", "Enter key sent", "dialog-ok")
+                    if session is not None:
+                        delivered = session.finish("", press_enter=True)
+                    else:
+                        press_enter_key()
+                        delivered = True
+                    send_notification(
+                        "MySuperWhisper",
+                        "Enter key sent" if delivered else "Live typing stopped; Enter not sent",
+                        "dialog-ok" if delivered else "dialog-warning",
+                    )
+                elif session is not None:
+                    session.finish("")
             else:
+                if session is not None:
+                    session.finish("")
                 log("Nothing detected.", "warning")
                 play_sound("error")
                 send_notification(
@@ -556,6 +606,8 @@ def audio_processing_loop():
                 )
 
         except Exception as e:
+            if session is not None:
+                session.abandon()  # Leave draft untouched on failure.
             log(f"Transcription error: {e}", "error")
             play_sound("error")
             if transcription.is_out_of_vram_error(e):

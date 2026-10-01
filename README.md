@@ -24,6 +24,9 @@ in the tray menu; the choice is persisted in `~/.config/mysuperwhisper/config.js
 Live preview reuses the same Granite Speech 5.0 model as final transcription. Final
 transcription falls back to CPU when no GPU is available.
 
+Enable **Live typing** in the tray menu to type words as you speak and correct
+them as the transcription updates. Keep the cursor in the same input while recording.
+
 ## Installation
 
 ### Linux

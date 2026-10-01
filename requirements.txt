@@ -10,4 +10,5 @@ pynput
 pystray
 Pillow>=12.1.1
 pyperclip
+regex
 pyobjc-framework-Cocoa; sys_platform == "darwin"

@@ -4,8 +4,7 @@ This repository is a fork of [OlivierMary/MySuperWhisper](https://github.com/Oli
 
 ## Main Changes In This Fork
 
-- Replaces the original transcription backend with IBM Granite Speech, using [`ibm-granite/granite-speech-5.0-470m-turboctc-nc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc-nc) for final transcription and [`ibm-granite/granite-speech-4.1-2b-nar`](https://huggingface.co/ibm-granite/granite-speech-4.1-2b-nar) for live preview
-- Adds live preview while recording with the Granite NAR preview model
+- Uses [`ibm-granite/granite-speech-5.0-470m-turboctc-nc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc-nc) for English transcription and live preview
 - Adds chunked preemptive decoding with silence-aware chunk commits
 - Adds model unload on inactivity and unload on demand from the tray menu
 - Adds macOS support alongside Linux (CoreAudio input, AppleScript notifications,
@@ -22,9 +21,8 @@ Global keyboard shortcuts are disabled by default, so the application only react
 remote-control commands. They can be enabled at runtime from **Global keyboard shortcuts**
 in the tray menu; the choice is persisted in `~/.config/mysuperwhisper/config.json`.
 
-The Granite preview model uses Flash Attention when `flash-attn` is installed and falls
-back to standard attention otherwise. A GPU (CUDA or Apple MPS) is required for live
-preview; final Granite transcription falls back to CPU when no GPU is available.
+Live preview reuses the same Granite Speech 5.0 model as final transcription. Final
+transcription falls back to CPU when no GPU is available.
 
 ## Installation
 

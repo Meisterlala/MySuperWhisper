@@ -64,7 +64,6 @@ class Config:
     def __init__(self):
         # Default values
         self.transcription_model = "ibm-granite/granite-speech-5.0-470m-turboctc-nc"
-        self.preview_model = "ibm-granite/granite-speech-4.1-2b-nar"
         self.language = "en"  # Default to English
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
@@ -96,7 +95,6 @@ class Config:
                 self.transcription_model = data.get(
                     "transcription_model", self.transcription_model
                 )
-                self.preview_model = data.get("preview_model", self.preview_model)
                 self.language = data.get("language", "en")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
@@ -145,7 +143,6 @@ class Config:
         try:
             data = {
                 "transcription_model": self.transcription_model,
-                "preview_model": self.preview_model,
                 "language": self.language,
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,

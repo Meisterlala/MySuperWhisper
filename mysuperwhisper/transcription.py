@@ -5,7 +5,6 @@ Handles model loading and speech-to-text conversion.
 
 import gc
 import importlib
-import importlib.util
 import math
 import threading
 from typing import Any
@@ -16,17 +15,11 @@ from .config import log, config
 _main_model: Any = None
 _main_processor: Any = None
 _main_tokenizer: Any = None
-_preview_model: Any = None
-_preview_processor: Any = None
-_preview_device: Any = None
 _torch: Any = None
 _transformers: Any = None
 _is_cpu_mode = False
 _main_device = None
 _model_lock = threading.RLock()
-_preview_load_thread = None
-_preview_load_generation = None
-_model_generation = 0
 
 
 def _ensure_dependencies():
@@ -225,77 +218,6 @@ def _load_main_model_with_cpu_fallback(model_name):
         _load_main_model(model_name, force_cpu=True)
 
 
-def _load_preview_model(model_name, generation):
-    global _preview_model, _preview_processor, _preview_device
-
-    device, dtype, cpu_mode = _get_device_and_dtype()
-    if cpu_mode:
-        log("Live preview model disabled because no GPU (CUDA/MPS) is available.", "warning")
-        return
-
-    try:
-        log(f"Loading Granite preview model '{model_name}' on {device}...")
-        processor = _transformers.AutoProcessor.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-        )
-        model_kwargs = {
-            "trust_remote_code": True,
-            "torch_dtype": dtype,
-        }
-        if device == "cuda" and importlib.util.find_spec("flash_attn") is not None:
-            model_kwargs["attn_implementation"] = "flash_attention_2"
-        elif device == "cuda":
-            log("flash-attn is unavailable; loading Granite preview with standard attention.")
-        model = _load_model_with_low_cpu_memory(
-            _transformers.AutoModel,
-            model_name,
-            device,
-            **model_kwargs,
-        )
-        model.eval()
-        if generation != _model_generation:
-            del model
-            gc.collect()
-            _flush_gpu_cache()
-            log("Discarded stale Granite preview model load.", "debug")
-            return
-        _preview_processor = processor
-        _preview_model = model
-        _preview_device = device
-        log(f"Granite preview model loaded on {device}.")
-    except Exception as exc:
-        if generation == _model_generation:
-            _preview_model = None
-            _preview_processor = None
-            _preview_device = None
-        log(f"Preview model unavailable: {exc}", "warning")
-
-
-def _start_preview_model_load(model_name):
-    """Load the optional preview model without blocking final transcription."""
-    global _preview_load_thread, _preview_load_generation
-
-    if not config.live_preview_enabled or _is_cpu_mode:
-        return
-    if (
-        _preview_load_thread
-        and _preview_load_thread.is_alive()
-        and _preview_load_generation == _model_generation
-    ):
-        return
-
-    generation = _model_generation
-    _preview_load_thread = threading.Thread(
-        target=_load_preview_model,
-        args=(model_name, generation),
-        name="granite-preview-loader",
-        daemon=True,
-    )
-    _preview_load_generation = generation
-    _preview_load_thread.start()
-
-
 def load_model(model_name=None):
     """
     Load the Granite speech models.
@@ -314,61 +236,40 @@ def load_model(model_name=None):
 
         selected_model = model_name or config.transcription_model
         _load_main_model_with_cpu_fallback(selected_model)
-        _start_preview_model_load(config.preview_model)
         return not _is_cpu_mode
 
 
-def reload_model(new_model_name=None, preview_model_name=None):
-    """
-    Reload Granite speech models.
-
-    Args:
-        new_model_name: New main transcription model to load
-        preview_model_name: New preview model to load
-
-    Returns:
-        bool: True if successful
-    """
-    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor, _preview_device
+def reload_model(new_model_name=None):
+    """Reload the speech model."""
+    global _main_model, _main_processor, _main_tokenizer
 
     with _model_lock:
         _ensure_dependencies()
-
         target_main_model = new_model_name or config.transcription_model
-        target_preview_model = preview_model_name or config.preview_model
-        log(
-            f"Reloading Granite models: main='{target_main_model}', preview='{target_preview_model}'..."
-        )
+        log(f"Reloading Granite transcription model: '{target_main_model}'...")
 
         try:
             unload_model()
             _load_main_model_with_cpu_fallback(target_main_model)
-            _start_preview_model_load(target_preview_model)
             config.transcription_model = target_main_model
-            config.preview_model = target_preview_model
             return True
-
         except Exception as exc:
-            log(f"Error reloading Granite models: {exc}", "error")
+            log(f"Error reloading Granite model: {exc}", "error")
             _main_model = None
             _main_processor = None
             _main_tokenizer = None
-            _preview_model = None
-            _preview_processor = None
-            _preview_device = None
             return False
 
 
 def unload_model():
     """Unload Granite speech models to free memory/VRAM."""
-    global _main_model, _main_processor, _main_tokenizer, _preview_model, _preview_processor
-    global _is_cpu_mode, _main_device, _model_generation, _preview_device
+    global _main_model, _main_processor, _main_tokenizer
+    global _is_cpu_mode, _main_device
 
     with _model_lock:
-        _model_generation += 1
         unloaded = False
 
-        if _main_model or _preview_model:
+        if _main_model:
             log("Unloading model to free resources...")
 
         if _main_model:
@@ -376,15 +277,8 @@ def unload_model():
             _main_model = None
             unloaded = True
 
-        if _preview_model:
-            del _preview_model
-            _preview_model = None
-            unloaded = True
-
         _main_processor = None
         _main_tokenizer = None
-        _preview_processor = None
-        _preview_device = None
         _is_cpu_mode = False
         _main_device = None
 
@@ -449,15 +343,6 @@ def _transcribe_with_main_model(audio_data):
     return output_text[0].strip() if output_text else ""
 
 
-def _transcribe_with_preview_model(audio_data):
-    inputs = _preview_processor([audio_data], device=_preview_device)
-    with _model_lock:
-        with _torch.inference_mode():
-            output = _preview_model.transcribe(**inputs)
-    transcriptions = _preview_processor.batch_decode(output.preds)
-    return transcriptions[0].strip() if transcriptions else ""
-
-
 def transcribe(audio_data, language=None, fast=False):
     """
     Transcribe audio to text.
@@ -466,7 +351,7 @@ def transcribe(audio_data, language=None, fast=False):
         audio_data: Audio data at 16kHz (use audio.prepare_for_transcription first)
         language: Language code ('fr', 'en', 'es', etc.)
                  If None, uses config.language
-        fast: If True, uses the preview model when available
+        fast: True when called for a live preview; uses the shared transcription model
 
     Returns:
         str: Transcribed text, or empty string if nothing detected
@@ -481,8 +366,7 @@ def transcribe(audio_data, language=None, fast=False):
 
     try:
         with _model_lock:
-            if fast and _preview_model is not None:
-                return _transcribe_with_preview_model(audio_data)
+            # Reuse the same model for live preview and final transcription.
             return _transcribe_with_main_model(audio_data)
 
     except Exception as exc:

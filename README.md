@@ -4,7 +4,7 @@ This repository is a fork of [OlivierMary/MySuperWhisper](https://github.com/Oli
 
 ## Main Changes In This Fork
 
-- Replaces the original transcription backend with IBM Granite Speech, using [`ibm-granite/granite-speech-4.1-2b`](https://huggingface.co/ibm-granite/granite-speech-4.1-2b) for final transcription and [`ibm-granite/granite-speech-4.1-2b-nar`](https://huggingface.co/ibm-granite/granite-speech-4.1-2b-nar) for live preview
+- Replaces the original transcription backend with IBM Granite Speech, using [`ibm-granite/granite-speech-5.0-470m-turboctc-nc`](https://huggingface.co/ibm-granite/granite-speech-5.0-470m-turboctc-nc) for final transcription and [`ibm-granite/granite-speech-4.1-2b-nar`](https://huggingface.co/ibm-granite/granite-speech-4.1-2b-nar) for live preview
 - Adds live preview while recording with the Granite NAR preview model
 - Adds chunked preemptive decoding with silence-aware chunk commits
 - Adds model unload on inactivity and unload on demand from the tray menu

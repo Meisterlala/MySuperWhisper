@@ -179,8 +179,12 @@ def _load_main_model(model_name, force_cpu=False):
     log(f"Loading Granite transcription model '{model_name}' on {device}...")
 
     processor = _transformers.AutoProcessor.from_pretrained(model_name)
+    if "granite-speech-5.0-470m-turboctc" in model_name:
+        model_class = _transformers.AutoModelForCTC
+    else:
+        model_class = _transformers.AutoModelForSpeechSeq2Seq
     model = _load_model_with_low_cpu_memory(
-        _transformers.AutoModelForSpeechSeq2Seq,
+        model_class,
         model_name,
         device,
         torch_dtype=dtype,
@@ -393,6 +397,22 @@ def unload_model():
 
 def _transcribe_with_main_model(audio_data):
     device = _main_device or _get_device_and_dtype()[0]
+    if "granite-speech-5.0-470m-turboctc" in config.transcription_model:
+        inputs = _main_processor(
+            [audio_data],
+            sampling_rate=16000,
+            device=device,
+            return_tensors="pt",
+        ).to(device, dtype=_main_model.dtype)
+        with _model_lock:
+            with _torch.inference_mode():
+                outputs = _main_model.generate(**inputs)
+        transcriptions = _main_processor.batch_decode(
+            outputs,
+            skip_special_tokens=True,
+        )
+        return transcriptions[0].strip() if transcriptions else ""
+
     prompt = _build_prompt()
     chat = [{"role": "user", "content": prompt}]
     prompt_text = _main_tokenizer.apply_chat_template(

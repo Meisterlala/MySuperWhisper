@@ -8,7 +8,7 @@ and the transcribed text is automatically typed into any application.
 
 Features:
 - Global hotkey (Double Ctrl) works in any application
-- Final transcription with Granite Speech 4.1 2B
+- Final transcription with Granite Speech 5.0 TurboCTC NC
 - Live preview with Granite Speech 4.1 2B NAR when available
 - Voice commands for newlines and validation
 - Transcription history with Triple Ctrl

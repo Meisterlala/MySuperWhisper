@@ -63,7 +63,7 @@ class Config:
 
     def __init__(self):
         # Default values
-        self.transcription_model = "ibm-granite/granite-speech-4.1-2b"
+        self.transcription_model = "ibm-granite/granite-speech-5.0-470m-turboctc-nc"
         self.preview_model = "ibm-granite/granite-speech-4.1-2b-nar"
         self.language = "en"  # Default to English
         self.system_notifications_enabled = True

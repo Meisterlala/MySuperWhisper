@@ -1,6 +1,6 @@
 torch
 torchaudio
-transformers>=5.5.3
+transformers>=5.16.0
 accelerate
 huggingface-hub
 soundfile

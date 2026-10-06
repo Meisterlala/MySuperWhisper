@@ -14,6 +14,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="MySuperWhisper.app"
 INSTALLED_APP="/Applications/$APP_NAME"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-MySuperWhisper Local Signing}"
 LAUNCH_AGENT_LABEL="com.local.mysuperwhisper"
 LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_AGENT_LABEL.plist"
 
@@ -59,7 +60,16 @@ if launchctl list "$LAUNCH_AGENT_LABEL" &>/dev/null; then
 fi
 rm -rf "$INSTALLED_APP"
 cp -R "$PROJECT_DIR/dist/$APP_NAME" "$INSTALLED_APP"
-codesign --force --deep --sign - "$INSTALLED_APP"
+if ! security find-identity -v -p codesigning | grep -q "\"$SIGNING_IDENTITY\""; then
+    step "Creating local signing certificate (one-time; macOS may ask for your password)..."
+    SIGNING_IDENTITY="$SIGNING_IDENTITY" "$PROJECT_DIR/packaging/setup-signing-cert.sh" || true
+fi
+if security find-identity -v -p codesigning | grep -q "\"$SIGNING_IDENTITY\""; then
+    codesign --force --deep --sign "$SIGNING_IDENTITY" "$INSTALLED_APP"
+else
+    warn "Could not create '$SIGNING_IDENTITY'; signing ad-hoc (Accessibility must be re-granted after every install)."
+    codesign --force --deep --sign - "$INSTALLED_APP"
+fi
 rm -rf "$PROJECT_DIR/build" "$PROJECT_DIR/dist"
 
 step "Registering LaunchAgent..."

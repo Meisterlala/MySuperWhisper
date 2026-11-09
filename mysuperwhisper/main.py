@@ -139,6 +139,15 @@ def on_double_ctrl():
         start_recording()
 
 
+def exit_on_fatal_cuda_error(exc):
+    """Fail the whole service, even when CUDA fails in a background thread."""
+    if transcription.is_fatal_cuda_error(exc):
+        log(f"Fatal CUDA failure; exiting for supervisor restart: {exc}", "error")
+        # sys.exit()/raising here only terminates the worker thread. Avoid GPU
+        # cleanup too: a poisoned CUDA context may fail again or hang.
+        os._exit(1)
+
+
 def lazy_load_model():
     """Load model in background without blocking recording."""
     global _is_model_loaded, _is_model_loading, _model_load_error
@@ -154,6 +163,7 @@ def lazy_load_model():
         tray.refresh_menu()
         log("Background model loading complete.")
     except Exception as exc:
+        exit_on_fatal_cuda_error(exc)
         _is_model_loaded = False
         _model_load_error = exc
         transcription.unload_model()
@@ -480,6 +490,7 @@ def live_preview_worker(stop_event, session):
                                                 if config.voice_commands_enabled else text)
                                 session.preview(preview_text)
                     except Exception as e:
+                        exit_on_fatal_cuda_error(e)
                         log(f"Live preview error: {e}", "debug")
             last_preview_time = now
     log("Live preview worker stopped", "debug")
@@ -606,6 +617,7 @@ def audio_processing_loop():
                 )
 
         except Exception as e:
+            exit_on_fatal_cuda_error(e)
             if session is not None:
                 session.abandon()  # Leave draft untouched on failure.
             log(f"Transcription error: {e}", "error")

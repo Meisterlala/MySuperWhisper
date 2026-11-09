@@ -410,6 +410,24 @@ def is_out_of_vram_error(exc):
     )
 
 
+def is_fatal_cuda_error(exc):
+    """Recognize CUDA context failures that require a fresh process, not OOM."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "unspecified launch failure",
+            "cudaerrorlaunchfailure",
+            "device-side assert",
+            "illegal memory access",
+            "cudaerrorillegaladdress",
+            "cudaerrorassert",
+            "cudaerrorcontextisdestroyed",
+            "cuda error: context is destroyed",
+        )
+    )
+
+
 def is_cpu_mode():
     """Check if model is running in CPU mode (degraded)."""
     return _is_cpu_mode
